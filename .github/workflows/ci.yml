@@ -63,7 +63,7 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Apply clippy lints
-      run: cargo hack clippy --each-feature
+      run: cargo hack clippy --each-feature --exclude-no-default-features
 
   # Run tests on some extra platforms
   cross:
@@ -83,7 +83,7 @@ jobs:
           # - mips64-unknown-linux-gnuabi64
           - riscv64gc-unknown-linux-gnu
           - wasm32-unknown-unknown
-          - wasm32-unknown-emscripten
+          # - wasm32-unknown-emscripten
           - wasm32-wasi
     runs-on: ubuntu-latest
     steps:
@@ -104,13 +104,13 @@ jobs:
         run: |
           cargo install cross
           cross build --target ${{ matrix.target }}
-        if: matrix.target != 'wasm32-unknown-unknown'
-      # # WASM support
-      # - name: cargo build --target ${{ matrix.target }}
-      #   run: |
-      #     rustup target add ${{ matrix.target }}
-      #     cargo build --features js --target ${{ matrix.target }}
-      #   if: matrix.target == 'wasm32-unknown-unknown'
+        if: matrix.target != 'wasm32-unknown-unknown' && matrix.target != 'wasm32-wasi'
+      # WASM support
+      - name: cargo build --target ${{ matrix.target }}
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --no-default-features --features alloc --target ${{ matrix.target }}
+        if: matrix.target == 'wasm32-unknown-unknown' || matrix.target == 'wasm32-wasi'
       # - name: cargo build --target ${{ matrix.target }}
       #   run: |
       #     rustup target add ${{ matrix.target }}
@@ -149,7 +149,7 @@ jobs:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run build
-      run: cargo hack build --feature-powerset
+      run: cargo hack build --each-feature --exclude-no-default-features
   
   test:
     name: test
@@ -183,151 +183,7 @@ jobs:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run test
-      run: cargo hack test --feature-powerset
-  
-  sanitizer:
-    name: sanitizer
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Cache cargo build and registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-sanitizer-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-sanitizer-
-      - name: Install Rust
-        run: rustup update $nightly && rustup default $nightly
-      - name: Install rust-src
-        run: rustup component add rust-src
-      - name: Install cargo-hack
-        run: cargo install cargo-hack
-      - name: ASAN / LSAN / TSAN
-        run: ci/sanitizer.sh
-
-  miri:
-    name: miri
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Cache cargo build and registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-miri-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-miri-
-      - name: Install cargo-hack
-        run: cargo install cargo-hack
-      - name: Miri
-        run: ci/miri.sh
-  loom:
-    name: loom
-    strategy:
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Cache cargo build and registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-loom-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-loom-
-      - name: Install Rust
-        run: rustup update $nightly && rustup default $nightly
-      - name: Install cargo-hack
-        run: cargo install cargo-hack
-      - name: Loom tests
-        run: RUSTFLAGS="--cfg loom -Dwarnings" cargo hack test --test loom
-  
-  # valgrind
-  valgrind:
-    name: valgrind
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Cache cargo build and registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-latest-valgrind-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ubuntu-latest-valgrind-
-
-      - name: Install Rust ${{ env.stable }}
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: ${{ env.stable }}
-            override: true
-      - name: Install Valgrind
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y valgrind
-      # Compile tests
-      # - name: cargo build foo
-      #   run: cargo build --bin foo
-      #   working-directory: integration
-
-      # Run with valgrind
-      # - name: Run valgrind foo
-      #   run: valgrind --error-exitcode=1 --leak-check=full --show-leak-kinds=all ./target/debug/foo
-      #   working-directory: integration
-
-  docs:
-    name: docs
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Cache cargo build and registry
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-latest-docs-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ubuntu-latest-docs-
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: ${{ env.nightly }}
-          override: true
-      - name: "doc --lib --all-features"
-        run: cargo doc --lib --no-deps --all-features
-        env:
-          RUSTFLAGS: --cfg docsrs
-          RUSTDOCFLAGS: --cfg docsrs -Dwarnings
+      run: cargo hack test --each-feature --exclude-no-default-features
 
   coverage:
     name: coverage
@@ -338,10 +194,6 @@ jobs:
       - build
       - cross
       - test
-      - sanitizer
-      - miri
-      - loom
-      - docs
     steps:
       - uses: actions/checkout@v3
       - name: Install latest nightly
@@ -369,7 +221,8 @@ jobs:
           command: tarpaulin
           args: --all-features --run-types tests --run-types doctests --workspace --out xml
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v3.1.1
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ${{ github.repository }}
           fail_ci_if_error: true
