@@ -10,8 +10,16 @@ pub trait Manifest: Default {
   /// The data type.
   type Data: Data;
 
+  /// The error type.
+  #[cfg(feature = "std")]
+  type Error: std::error::Error;
+
+  /// The error type.
+  #[cfg(not(feature = "std"))]
+  type Error: core::fmt::Debug + core::fmt::Display;
+
   /// Insert a new entry.
-  fn insert(&mut self, entry: Entry<Self::Data>);
+  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
 
   /// Iterate over the entries.
   fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>>;
@@ -21,14 +29,4 @@ pub trait Manifest: Default {
 
   /// Returns the number of creations.
   fn creations(&self) -> u64;
-
-  /// Returns the latest file id.
-  ///
-  /// The semantics of this method is similar to `AtomicU32::load(ordering)`.
-  fn latest(&self) -> u32;
-
-  /// Returns the next file id.
-  ///
-  /// The semantics of this method is similar to `AtomicU32::fetch_add(1, ordering)`.
-  fn next(&self) -> u32;
 }

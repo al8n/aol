@@ -14,7 +14,7 @@
 /// Errors for manifest file.
 #[derive(Debug)]
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub enum Error<F: super::File, D: super::Data> {
+pub enum Error<F: super::File, M: super::Manifest> {
   /// Manifest has bad magic.
   #[error("manifest has bad magic text")]
   #[cfg(feature = "std")]
@@ -56,19 +56,18 @@ pub enum Error<F: super::File, D: super::Data> {
 
   /// Encode/decode data error.
   #[cfg_attr(feature = "std", error(transparent))]
-  Data(D::Error),
+  Data(<M::Data as super::Data>::Error),
 
-  // /// Unknown manifest event.
-  // #[error(transparent)]
-  // #[cfg(feature = "std")]
-  // #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-  // UnknownManifestEvent(#[from] UnknownManifestEvent),
+  /// Manifest error.
+  #[cfg_attr(feature = "std", error(transparent))]
+  Manifest(M::Error),
+
   /// I/O error.
   #[cfg_attr(feature = "std", error(transparent))]
   IO(F::Error),
 }
 
-impl<F: super::File, D: super::Data> Error<F, D> {
+impl<F: super::File, M: super::Manifest> Error<F, M> {
   /// Create a new `Error` from an I/O error.
   #[inline]
   pub const fn io(err: F::Error) -> Self {
@@ -77,7 +76,13 @@ impl<F: super::File, D: super::Data> Error<F, D> {
 
   /// Create a new `Error` from a data error.
   #[inline]
-  pub const fn data(err: D::Error) -> Self {
+  pub const fn data(err: <M::Data as super::Data>::Error) -> Self {
     Self::Data(err)
+  }
+
+  /// Create a new `Error` from an unknown manifest event.
+  #[inline]
+  pub const fn manifest(err: M::Error) -> Self {
+    Self::Manifest(err)
   }
 }

@@ -49,18 +49,18 @@ const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
 const MAGIC_LEN: usize = mem::size_of::<u16>();
 const EXTERNAL_MAGIC_LEN: usize = mem::size_of::<u16>();
 const MANIFEST_HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + EXTERNAL_MAGIC_LEN; // magic text + external magic + magic
-const FIXED_MANIFEST_ENTRY_SIZE: usize = 1 + FID_SIZE + CHECKSUM_SIZE; // flag + fid + checksum
+const MANIFEST_ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE + CHECKSUM_SIZE; // flag + fid + checksum
 const MAX_INLINE_SIZE: usize = 64;
-const FID_SIZE: usize = mem::size_of::<u32>();
 const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
+const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
 
 const DELETE_FLAG: u8 = 0b00000001;
 const MASK: u8 = 0b11111110;
-const CUSTOM_CORE_MASK: CustomFlagCore = CustomFlagCore::from_bits_retain(MASK);
+const CUSTOM_CORE_MASK: CustomFlagsCore = CustomFlagsCore::from_bits_retain(MASK);
 
 bitflags::bitflags! {
   #[derive(Default, PartialEq, Eq, Copy, Clone, Hash)]
-  struct CustomFlagCore: u8 {
+  struct CustomFlagsCore: u8 {
     const BIT1 = 0b00000010;
     const BIT2 = 0b00000100;
     const BIT3 = 0b00001000;
@@ -73,17 +73,17 @@ bitflags::bitflags! {
 
 /// A 7-bit custom flag.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CustomFlag(CustomFlagCore);
+pub struct CustomFlags(CustomFlagsCore);
 
-impl core::fmt::Debug for CustomFlag {
+impl core::fmt::Debug for CustomFlags {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_tuple("CustomFlag")
+    f.debug_tuple("CustomFlags")
       .field(&(self.0.bits() & MASK))
       .finish()
   }
 }
 
-impl core::fmt::Display for CustomFlag {
+impl core::fmt::Display for CustomFlags {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     write!(f, "{}", self.0.bits() & MASK)
   }
@@ -96,19 +96,26 @@ macro_rules! bits_api {
         #[doc = concat!("Set the bit", $num,)]
         #[inline]
         pub fn [< set_bit $num >] (&mut self) {
-          self.0.insert(CustomFlagCore::[< BIT $num >]);
+          self.0.insert(CustomFlagsCore::[< BIT $num >]);
+        }
+
+        #[doc = concat!("Set the bit", $num,)]
+        #[inline]
+        pub fn [< with_bit $num >] (mut self) -> Self {
+          self.0.insert(CustomFlagsCore::[< BIT $num >]);
+          self
         }
 
         #[doc = concat!("Clear the bit", $num,)]
         #[inline]
         pub fn [< clear_bit $num >](&mut self) {
-          self.0.remove(CustomFlagCore::[< BIT $num >]);
+          self.0.remove(CustomFlagsCore::[< BIT $num >]);
         }
 
         #[doc = concat!("Returns `true` if the bit", $num, " is set.")]
         #[inline]
         pub const fn [< bit $num >](&self) -> bool {
-          self.0.contains(CustomFlagCore::[< BIT $num >])
+          self.0.contains(CustomFlagsCore::[< BIT $num >])
         }
       }
     )*
@@ -121,7 +128,7 @@ macro_rules! flags_api {
       #[doc = $doc]
       #[inline]
       pub const fn $name(&self, other: Self) -> Self {
-        Self(CustomFlagCore::from_bits_retain((self.0.$name(other.0).bits() & MASK)))
+        Self(CustomFlagsCore::from_bits_retain((self.0.$name(other.0).bits() & MASK)))
       }
     )*
   };
@@ -130,7 +137,7 @@ macro_rules! flags_api {
 macro_rules! impl_bitwise_ops {
   ($($trait:ident, $method:ident, $assign_trait:ident, $assign_method:ident),+ $(,)?) => {
     $(
-      impl core::ops::$trait for CustomFlag {
+      impl core::ops::$trait for CustomFlags {
         type Output = Self;
 
         #[inline]
@@ -140,7 +147,7 @@ macro_rules! impl_bitwise_ops {
         }
       }
 
-      impl core::ops::$assign_trait for CustomFlag {
+      impl core::ops::$assign_trait for CustomFlags {
         #[inline]
         #[allow(clippy::suspicious_op_assign_impl)]
         fn $assign_method(&mut self, rhs: Self) {
@@ -152,7 +159,7 @@ macro_rules! impl_bitwise_ops {
   };
 }
 
-impl core::ops::Not for CustomFlag {
+impl core::ops::Not for CustomFlags {
   type Output = Self;
 
   #[inline]
@@ -167,17 +174,17 @@ impl_bitwise_ops! {
   BitXor, bitxor, BitXorAssign, bitxor_assign,
 }
 
-impl CustomFlag {
+impl CustomFlags {
   /// Get a flags value with all known bits set.
   #[inline]
   pub const fn all() -> Self {
-    Self(CustomFlagCore::all())
+    Self(CustomFlagsCore::all())
   }
 
   /// Get a flags value with all known bits unset.
   #[inline]
   pub const fn empty() -> Self {
-    Self(CustomFlagCore::empty())
+    Self(CustomFlagsCore::empty())
   }
 
   /// Whether all set bits in a source flags value are also set in a target flags value.
@@ -196,7 +203,7 @@ impl CustomFlag {
   /// The bitwise negation (`!`) of the bits in a flags value, truncating the result.
   #[inline]
   pub const fn complement(&self) -> Self {
-    Self(CustomFlagCore::from_bits_retain(
+    Self(CustomFlagsCore::from_bits_retain(
       self.0.complement().bits() & MASK,
     ))
   }
@@ -260,7 +267,7 @@ impl core::fmt::Debug for EntryFlags {
 impl EntryFlags {
   /// Creates a new [`EntryFlags`] with the deletion flag set
   #[inline]
-  pub const fn deletion(flag: CustomFlag) -> Self {
+  pub const fn deletion(flag: CustomFlags) -> Self {
     let mut this = Self::new(flag);
     this.value |= DELETE_FLAG;
     this
@@ -268,7 +275,7 @@ impl EntryFlags {
 
   /// Creates a new [`EntryFlags`] with the creation flag set
   #[inline]
-  pub const fn creation(flag: CustomFlag) -> Self {
+  pub const fn creation(flag: CustomFlags) -> Self {
     let mut this = Self::new(flag);
     this.value &= !DELETE_FLAG;
     this
@@ -276,13 +283,13 @@ impl EntryFlags {
 
   /// Returns the custom flag
   #[inline]
-  pub const fn custom_flag(&self) -> CustomFlag {
-    CustomFlag(CustomFlagCore::from_bits_retain(self.value >> 1))
+  pub const fn custom_flag(&self) -> CustomFlags {
+    CustomFlags(CustomFlagsCore::from_bits_retain(self.value >> 1))
   }
 
   /// Set the custom flag
   #[inline]
-  pub fn set_custom_flag(&mut self, flag: CustomFlag) {
+  pub fn set_custom_flag(&mut self, flag: CustomFlags) {
     self.value = (flag.bits() << 1) & MASK | (self.value & DELETE_FLAG);
   }
 
@@ -300,7 +307,7 @@ impl EntryFlags {
 
   // Creates a new EntryFlags with initial value (excluding the first bit)
   #[inline]
-  const fn new(flag: CustomFlag) -> Self {
+  const fn new(flag: CustomFlags) -> Self {
     Self {
       value: flag.bits() & MASK,
     }
@@ -326,9 +333,6 @@ impl Checksumer for Crc32 {
 
 /// Data for the [`Entry`].
 pub trait Data: Sized {
-  /// Maximum size of the data.
-  const ENCODED_SIZE: usize;
-
   /// The error type returned by encoding.
   #[cfg(feature = "std")]
   type Error: std::error::Error;
@@ -337,11 +341,33 @@ pub trait Data: Sized {
   #[cfg(not(feature = "std"))]
   type Error: core::fmt::Debug + core::fmt::Display;
 
+  /// Returns the encoded size of the data.
+  fn encoded_size(&self) -> usize;
+
   /// Encodes the data into the buffer, returning the number of bytes written.
   fn encode(&self, buf: &mut [u8]) -> Result<usize, Self::Error>;
 
   /// Decodes the data from the buffer, returning the number of bytes read.
   fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error>;
+}
+
+impl Data for () {
+  type Error = core::convert::Infallible;
+
+  #[inline]
+  fn encoded_size(&self) -> usize {
+    0
+  }
+
+  #[inline]
+  fn encode(&self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
+    Ok(0)
+  }
+
+  #[inline]
+  fn decode(_buf: &[u8]) -> Result<(usize, Self), Self::Error> {
+    Ok((0, ()))
+  }
 }
 
 /// The underlying file.
@@ -496,7 +522,6 @@ impl Options {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Entry<D> {
   flag: EntryFlags,
-  fid: u32,
   data: D,
 }
 
@@ -505,12 +530,6 @@ impl<D> Entry<D> {
   #[inline]
   pub const fn flag(&self) -> EntryFlags {
     self.flag
-  }
-
-  /// Get the file id.
-  #[inline]
-  pub const fn fid(&self) -> u32 {
-    self.fid
   }
 
   /// Get the data.
@@ -538,10 +557,10 @@ impl<D> Entry<D> {
 
     debug_assert_eq!(
       cursor,
-      FIXED_MANIFEST_ENTRY_SIZE + D::ENCODED_SIZE,
+      MANIFEST_ENTRY_HEADER_SIZE + D::ENCODED_SIZE,
       "invalid encoded size, expected {} got {}",
       cursor,
-      FIXED_MANIFEST_ENTRY_SIZE + D::ENCODED_SIZE
+      MANIFEST_ENTRY_HEADER_SIZE + D::ENCODED_SIZE
     );
     Ok(cursor)
   }
@@ -616,7 +635,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
     path: P,
     file_opts: F::Options,
     opts: Options,
-  ) -> Result<Self, Error<F, M::Data>> {
+  ) -> Result<Self, Error<F, M>> {
     let (existing, file) = F::open(path, file_opts).map_err(Error::io)?;
 
     Self::open_in(file, existing, opts)
@@ -625,7 +644,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
   /// Open and replay the manifest file.
   #[cfg(not(feature = "std"))]
   #[inline]
-  pub fn open(file_opts: F::Options, opts: Options) -> Result<Self, Error<F, M::Data>> {
+  pub fn open(file_opts: F::Options, opts: Options) -> Result<Self, Error<F, M>> {
     let (existing, file) = F::open(file_opts).map_err(Error::io)?;
 
     Self::open_in(file, existing, opts)
@@ -633,13 +652,13 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
 
   /// Flush the manifest file.
   #[inline]
-  pub fn flush(&mut self) -> Result<(), Error<F, M::Data>> {
+  pub fn flush(&mut self) -> Result<(), Error<F, M>> {
     self.file.flush().map_err(Error::io)
   }
 
   /// Sync the manifest file.
   #[inline]
-  pub fn sync_all(&self) -> Result<(), Error<F, M::Data>> {
+  pub fn sync_all(&self) -> Result<(), Error<F, M>> {
     self.file.sync_all().map_err(Error::io)
   }
 
@@ -649,27 +668,20 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
     &self.opts
   }
 
-  /// Returns the latest fid.
+  /// Returns the current manifest.
   #[inline]
-  pub fn latest(&self) -> u32 {
-    self.manifest.latest()
-  }
-
-  /// Returns the next fid.
-  #[inline]
-  pub fn next(&self) -> u32 {
-    self.manifest.next()
+  pub const fn manifest(&self) -> &M {
+    &self.manifest
   }
 
   /// Append an entry to the manifest file.
   #[inline]
-  pub fn append(&mut self, ent: Entry<M::Data>) -> Result<(), Error<F, M::Data>> {
+  pub fn append(&mut self, ent: Entry<M::Data>) -> Result<(), Error<F, M>> {
     self.append_in(ent)
   }
 
   /// Append a batch of entries to the manifest file.
-  #[inline]
-  pub fn append_batch(&mut self, entries: Vec<Entry<M::Data>>) -> Result<(), Error<F, M::Data>> {
+  pub fn append_batch(&mut self, entries: Vec<Entry<M::Data>>) -> Result<(), Error<F, M>> {
     if self.should_rewrite() {
       self.rewrite()?;
     }
@@ -717,7 +729,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
     }
   }
 
-  fn open_in(mut file: F, existing: bool, opts: Options) -> Result<Self, Error<F, M::Data>> {
+  fn open_in(mut file: F, existing: bool, opts: Options) -> Result<Self, Error<F, M>> {
     let Options {
       magic,
       external_magic,
@@ -774,12 +786,13 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
       });
     }
 
-    let encoded_entry_size = FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE;
+    let encoded_entry_size = MANIFEST_ENTRY_HEADER_SIZE + M::Data::ENCODED_SIZE;
 
     let num_entries = (size - MANIFEST_HEADER_SIZE as u64) / encoded_entry_size as u64;
     let remaining = (size - MANIFEST_HEADER_SIZE as u64) % encoded_entry_size as u64;
     if remaining != 0 {
-      return Err(Error::Corrupted);
+      // we have partial entry, truncate the file
+      file.truncate(size - remaining).map_err(Error::io)?;
     }
 
     let mut manifest = M::default();
@@ -796,7 +809,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
         let mut buf = [0; MAX_INLINE_SIZE];
         file.read_exact(&mut buf).map_err(Error::io)?;
 
-        Entry::decode::<C>(&buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE]).map_err(
+        Entry::decode::<C>(&buf[..MANIFEST_ENTRY_HEADER_SIZE + M::Data::ENCODED_SIZE]).map_err(
           |e| match e {
             Some(e) => Error::data(e),
             None => Error::ChecksumMismatch,
@@ -804,7 +817,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
         )?
       };
 
-      manifest.insert(ent);
+      manifest.insert(ent).map_err(Error::manifest)?;
     }
 
     let mut this = Self {
@@ -822,16 +835,16 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
   }
 
   #[inline]
-  fn append_in(&mut self, entry: Entry<M::Data>) -> Result<(), Error<F, M::Data>> {
+  fn append_in(&mut self, entry: Entry<M::Data>) -> Result<(), Error<F, M>> {
     if self.should_rewrite() {
       self.rewrite()?;
     }
 
     append::<F, M, C>(&mut self.file, &entry, self.opts.sync_on_write)
-      .map(|_| self.manifest.insert(entry))
+      .and_then(|_| self.manifest.insert(entry).map_err(Error::manifest))
   }
 
-  fn rewrite(&mut self) -> Result<(), Error<F, M::Data>> {
+  fn rewrite(&mut self) -> Result<(), Error<F, M>> {
     let old = mem::take(&mut self.manifest);
 
     // truncate the file
@@ -842,9 +855,8 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
 
     for ent in old.into_iter() {
       if ent.flag.is_creation() {
-        append::<F, M, C>(&mut self.file, &ent, self.opts.sync_on_write).map(|_| {
-          self.manifest.insert(ent);
-        })?;
+        append::<F, M, C>(&mut self.file, &ent, self.opts.sync_on_write)
+          .and_then(|_| self.manifest.insert(ent).map_err(Error::manifest))?;
       }
     }
 
@@ -866,9 +878,9 @@ fn append<F: File, M: Manifest, C: Checksumer>(
   file: &mut F,
   ent: &Entry<M::Data>,
   sync: bool,
-) -> Result<(), Error<F, M::Data>> {
-  if M::Data::ENCODED_SIZE + FIXED_MANIFEST_ENTRY_SIZE > MAX_INLINE_SIZE {
-    let mut buf = Vec::with_capacity(M::Data::ENCODED_SIZE + FIXED_MANIFEST_ENTRY_SIZE);
+) -> Result<(), Error<F, M>> {
+  if M::Data::ENCODED_SIZE + MANIFEST_ENTRY_HEADER_SIZE > MAX_INLINE_SIZE {
+    let mut buf = Vec::with_capacity(M::Data::ENCODED_SIZE + MANIFEST_ENTRY_HEADER_SIZE);
     ent.encode::<C>(&mut buf).map_err(Error::data)?;
     file
       .write_all(&buf)
@@ -877,7 +889,7 @@ fn append<F: File, M: Manifest, C: Checksumer>(
   } else {
     let mut buf = [0; MAX_INLINE_SIZE];
     let encoded = ent
-      .encode::<C>(&mut buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE])
+      .encode::<C>(&mut buf[..MANIFEST_ENTRY_HEADER_SIZE + M::Data::ENCODED_SIZE])
       .map_err(Error::data)?;
     file
       .write_all(&buf[..encoded])

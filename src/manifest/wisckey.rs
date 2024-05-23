@@ -1,8 +1,8 @@
 #[cfg(feature = "std")]
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[cfg(not(feature = "std"))]
-use hashbrown::HashMap;
+use hashbrown::HashSet;
 
 /// [`Manifest`](crate::manifest::Manifest) implementors for Wisckey WALs based on bitcask model.
 pub mod bitcask;
