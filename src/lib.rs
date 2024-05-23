@@ -17,6 +17,8 @@ extern crate std;
 #[cfg(not(feature = "std"))]
 use std::vec::Vec;
 
+use core::mem;
+
 /// Errors.
 pub mod error;
 use error::Error;
@@ -44,14 +46,13 @@ const MANIFEST_DELETIONS_RATIO: u64 = 10;
 /// Magic text for the manifest file, this will never be changed.
 const MAGIC_TEXT: &[u8] = b"al8n";
 const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
-const MAGIC_LEN: usize = core::mem::size_of::<u16>();
-const EXTERNAL_MAGIC_LEN: usize = core::mem::size_of::<u16>();
+const MAGIC_LEN: usize = mem::size_of::<u16>();
+const EXTERNAL_MAGIC_LEN: usize = mem::size_of::<u16>();
 const MANIFEST_HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + EXTERNAL_MAGIC_LEN; // magic text + external magic + magic
 const FIXED_MANIFEST_ENTRY_SIZE: usize = 1 + FID_SIZE + CHECKSUM_SIZE; // flag + fid + checksum
-
 const MAX_INLINE_SIZE: usize = 64;
-const FID_SIZE: usize = core::mem::size_of::<u32>();
-const CHECKSUM_SIZE: usize = core::mem::size_of::<u32>();
+const FID_SIZE: usize = mem::size_of::<u32>();
+const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
 
 const DELETE_FLAG: u8 = 0b00000001;
 const MASK: u8 = 0b11111110;
@@ -306,6 +307,23 @@ impl EntryFlags {
   }
 }
 
+/// Checksumer trait.
+pub trait Checksumer {
+  /// Calculate the checksum of the buffer.
+  fn checksum(buf: &[u8]) -> u32;
+}
+
+/// CRC32 checksumer.
+#[derive(Default, Debug, Copy, Clone)]
+pub struct Crc32;
+
+impl Checksumer for Crc32 {
+  #[inline]
+  fn checksum(buf: &[u8]) -> u32 {
+    crc32fast::hash(buf)
+  }
+}
+
 /// Data for the [`Entry`].
 pub trait Data: Sized {
   /// Maximum size of the data.
@@ -460,7 +478,7 @@ impl<F: File> Options<F> {
   }
 
   /// Get whether flush the data to disk after write.
-  /// 
+  ///
   /// Default is `true`.
   #[inline]
   pub const fn sync_on_write(&self) -> bool {
@@ -496,7 +514,7 @@ impl<F: File> Options<F> {
   }
 
   /// Set whether flush the data to disk after write.
-  /// 
+  ///
   ///  Default is `true`.
   #[inline]
   pub const fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
@@ -534,8 +552,9 @@ impl<D> Entry<D> {
   }
 
   #[inline]
-  fn encode(&self, buf: &mut [u8]) -> Result<usize, D::Error>
+  fn encode<C>(&self, buf: &mut [u8]) -> Result<usize, D::Error>
   where
+    C: Checksumer,
     D: Data,
   {
     let mut cursor = 0;
@@ -544,39 +563,40 @@ impl<D> Entry<D> {
     buf[cursor..cursor + FID_SIZE].copy_from_slice(&self.fid.to_le_bytes());
     cursor += FID_SIZE;
     let encoded = self.data.encode(&mut buf[cursor..])?;
-    let cks = crc32fast::hash(&buf[..cursor + encoded]).to_le_bytes();
+    let cks = C::checksum(&buf[..cursor + encoded]).to_le_bytes();
     cursor += D::ENCODED_SIZE;
     buf[cursor..cursor + CHECKSUM_SIZE].copy_from_slice(&cks);
     cursor += CHECKSUM_SIZE;
 
-    debug_assert_eq!(cursor, FIXED_MANIFEST_ENTRY_SIZE + D::ENCODED_SIZE, "invalid encoded size, expected {} got {}", cursor, FIXED_MANIFEST_ENTRY_SIZE + D::ENCODED_SIZE);
+    debug_assert_eq!(
+      cursor,
+      FIXED_MANIFEST_ENTRY_SIZE + D::ENCODED_SIZE,
+      "invalid encoded size, expected {} got {}",
+      cursor,
+      FIXED_MANIFEST_ENTRY_SIZE + D::ENCODED_SIZE
+    );
     Ok(cursor)
   }
 
   #[inline]
-  fn decode(buf: &[u8]) -> Result<Self, Option<D::Error>>
+  fn decode<C>(buf: &[u8]) -> Result<Self, Option<D::Error>>
   where
+    C: Checksumer,
     D: Data,
   {
-    let flag = EntryFlags {
-      value: buf[0],
-    };
+    let flag = EntryFlags { value: buf[0] };
 
     let mut cursor = 1;
     let fid = u32::from_le_bytes(buf[cursor..cursor + FID_SIZE].try_into().unwrap());
     cursor += FID_SIZE;
     let (read, data) = D::decode(&buf[cursor..cursor + D::ENCODED_SIZE]).map_err(Some)?;
-    let cks = crc32fast::hash(&buf[..cursor + read]).to_le_bytes();
+    let cks = C::checksum(&buf[..cursor + read]).to_le_bytes();
     cursor += D::ENCODED_SIZE;
     if cks != buf[cursor..cursor + CHECKSUM_SIZE] {
       return Err(None);
     }
 
-    Ok(Self {
-      flag,
-      fid,
-      data,
-    })
+    Ok(Self { flag, fid, data })
   }
 }
 
@@ -595,13 +615,14 @@ impl<D> Entry<D> {
 /// | ...                  | ...                      | ...                   | ...                   | ...                   |
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 /// ```
-pub struct ManifestFile<F: File, M: Manifest> {
+pub struct ManifestFile<F: File, M: Manifest, C = Crc32> {
   opts: Options<F>,
   file: F,
   manifest: M,
+  _checksumer: core::marker::PhantomData<C>,
 }
 
-impl<F: File, M: Manifest> ManifestFile<F, M> {
+impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
   /// Open and replay the manifest file.
   pub fn open(opts: Options<F>) -> Result<Self, Error<F, M::Data>> {
     let (existing, mut file) = F::open(opts.file_options()).map_err(Error::io)?;
@@ -609,8 +630,10 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
     if !existing {
       let mut buf = [0; MANIFEST_HEADER_SIZE];
       buf[..MAGIC_TEXT_LEN].copy_from_slice(MAGIC_TEXT);
-      buf[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN].copy_from_slice(&opts.external_magic.to_le_bytes());
-      buf[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE].copy_from_slice(&opts.magic.to_le_bytes());
+      buf[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN]
+        .copy_from_slice(&opts.external_magic.to_le_bytes());
+      buf[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE]
+        .copy_from_slice(&opts.magic.to_le_bytes());
       file.write_all(&buf).map_err(Error::io)?;
       file.flush().map_err(Error::io)?;
 
@@ -618,6 +641,7 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
         opts,
         file,
         manifest: M::default(),
+        _checksumer: core::marker::PhantomData,
       });
     }
 
@@ -629,7 +653,11 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
       return Err(Error::BadMagicText);
     }
 
-    let external = u16::from_le_bytes(header[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN].try_into().unwrap());
+    let external = u16::from_le_bytes(
+      header[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN]
+        .try_into()
+        .unwrap(),
+    );
     if external != opts.external_magic {
       return Err(Error::BadExternalMagic {
         expected: opts.external_magic,
@@ -637,7 +665,11 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
       });
     }
 
-    let version = u16::from_le_bytes(header[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE].try_into().unwrap());
+    let version = u16::from_le_bytes(
+      header[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE]
+        .try_into()
+        .unwrap(),
+    );
     if version != opts.magic {
       return Err(Error::BadMagic {
         expected: opts.magic,
@@ -659,7 +691,7 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
       let ent = if encoded_entry_size > MAX_INLINE_SIZE {
         let mut buf = std::vec![0; encoded_entry_size];
         file.read_exact(&mut buf).map_err(Error::io)?;
-        Entry::decode(&buf).map_err(|e| match e {
+        Entry::decode::<C>(&buf).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?
@@ -667,10 +699,12 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
         let mut buf = [0; MAX_INLINE_SIZE];
         file.read_exact(&mut buf).map_err(Error::io)?;
 
-        Entry::decode(&buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE]).map_err(|e| match e {
-          Some(e) => Error::data(e),
-          None => Error::ChecksumMismatch,
-        })?
+        Entry::decode::<C>(&buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE]).map_err(
+          |e| match e {
+            Some(e) => Error::data(e),
+            None => Error::ChecksumMismatch,
+          },
+        )?
       };
 
       manifest.insert(ent);
@@ -680,6 +714,7 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
       file,
       manifest,
       opts,
+      _checksumer: core::marker::PhantomData,
     };
 
     if this.should_rewrite() {
@@ -727,12 +762,12 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
     }
 
     let total_encoded_size = M::Data::ENCODED_SIZE * entries.len();
-    
+
     macro_rules! encode_batch {
       ($buf:ident) => {{
         let mut cursor = 0;
         for ent in entries {
-          cursor += ent.encode(&mut $buf[cursor..]).map_err(Error::data)?;
+          cursor += ent.encode::<C>(&mut $buf[cursor..]).map_err(Error::data)?;
         }
       }};
     }
@@ -740,22 +775,32 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
     if total_encoded_size > MAX_INLINE_SIZE {
       let mut buf = std::vec![0; total_encoded_size];
       encode_batch!(buf);
-      self.file.write_all(&buf).and_then(|_| if self.opts.sync_on_write {
-        self.file.flush()
-      } else {
-        Ok(())
-      })
-      .map_err(Error::io)
+      self
+        .file
+        .write_all(&buf)
+        .and_then(|_| {
+          if self.opts.sync_on_write {
+            self.file.flush()
+          } else {
+            Ok(())
+          }
+        })
+        .map_err(Error::io)
     } else {
       let mut buf = [0; MAX_INLINE_SIZE];
       let buf = &mut buf[..total_encoded_size];
       encode_batch!(buf);
-      self.file.write_all(buf).and_then(|_| if self.opts.sync_on_write {
-        self.file.flush()
-      } else {
-        Ok(())
-      })
-      .map_err(Error::io)
+      self
+        .file
+        .write_all(buf)
+        .and_then(|_| {
+          if self.opts.sync_on_write {
+            self.file.flush()
+          } else {
+            Ok(())
+          }
+        })
+        .map_err(Error::io)
     }
   }
 
@@ -765,11 +810,12 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
       self.rewrite()?;
     }
 
-    append::<F, M>(&mut self.file, &entry, self.opts.sync_on_write).map(|_| self.manifest.insert(entry))
+    append::<F, M, C>(&mut self.file, &entry, self.opts.sync_on_write)
+      .map(|_| self.manifest.insert(entry))
   }
 
   fn rewrite(&mut self) -> Result<(), Error<F, M::Data>> {
-    let old = core::mem::take(&mut self.manifest);
+    let old = mem::take(&mut self.manifest);
 
     // truncate the file
     self
@@ -779,11 +825,7 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
 
     for ent in old.into_iter() {
       if ent.flag.is_creation() {
-        append::<F, M>(
-          &mut self.file,
-          &ent,
-          self.opts.sync_on_write,
-        ).map(|_| {
+        append::<F, M, C>(&mut self.file, &ent, self.opts.sync_on_write).map(|_| {
           self.manifest.insert(ent);
         })?;
       }
@@ -799,31 +841,30 @@ impl<F: File, M: Manifest> ManifestFile<F, M> {
     let deletions = self.manifest.deletions();
     let creations = self.manifest.creations();
     deletions > self.opts.rewrite_threshold
-      && deletions
-        > MANIFEST_DELETIONS_RATIO
-          * creations
-            .saturating_sub(deletions)
+      && deletions > MANIFEST_DELETIONS_RATIO * creations.saturating_sub(deletions)
   }
 }
 
-fn append<F: File, M: Manifest>(file: &mut F, ent: &Entry<M::Data>, sync: bool) -> Result<(), Error<F, M::Data>> {
+fn append<F: File, M: Manifest, C: Checksumer>(
+  file: &mut F,
+  ent: &Entry<M::Data>,
+  sync: bool,
+) -> Result<(), Error<F, M::Data>> {
   if M::Data::ENCODED_SIZE + FIXED_MANIFEST_ENTRY_SIZE > MAX_INLINE_SIZE {
     let mut buf = Vec::with_capacity(M::Data::ENCODED_SIZE + FIXED_MANIFEST_ENTRY_SIZE);
-    ent.encode(&mut buf).map_err(Error::data)?;
-    file.write_all(&buf).and_then(|_| if sync {
-      file.flush()
-    } else {
-      Ok(())
-    })
-    .map_err(Error::io)
+    ent.encode::<C>(&mut buf).map_err(Error::data)?;
+    file
+      .write_all(&buf)
+      .and_then(|_| if sync { file.flush() } else { Ok(()) })
+      .map_err(Error::io)
   } else {
     let mut buf = [0; MAX_INLINE_SIZE];
-    let encoded = ent.encode(&mut buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE]).map_err(Error::data)?;
-    file.write_all(&buf[..encoded]).and_then(|_| if sync {
-      file.flush()
-    } else {
-      Ok(())
-    })
-    .map_err(Error::io)
+    let encoded = ent
+      .encode::<C>(&mut buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE])
+      .map_err(Error::data)?;
+    file
+      .write_all(&buf[..encoded])
+      .and_then(|_| if sync { file.flush() } else { Ok(()) })
+      .map_err(Error::io)
   }
 }

@@ -6,7 +6,6 @@ use std::{
 
 use super::*;
 
-
 impl super::File for StdFile {
   type Options = PathBuf;
 
@@ -14,7 +13,8 @@ impl super::File for StdFile {
 
   fn open(path: &Self::Options) -> Result<(bool, Self), Self::Error>
   where
-    Self: Sized {
+    Self: Sized,
+  {
     let existing = path.exists();
     OpenOptions::new()
       .read(true)
@@ -46,7 +46,7 @@ impl super::File for StdFile {
   }
 
   fn size(&self) -> Result<u64, Self::Error> {
-    self.metadata().map(|m| m.len()).map_err(Into::into) 
+    self.metadata().map(|m| m.len()).map_err(Into::into)
   }
 }
 
@@ -56,8 +56,9 @@ impl super::File for BufWriter<StdFile> {
   type Error = io::Error;
 
   fn open(opts: &Self::Options) -> Result<(bool, Self), Self::Error>
-    where
-      Self: Sized {
+  where
+    Self: Sized,
+  {
     let existing = opts.exists();
     OpenOptions::new()
       .read(true)
@@ -89,6 +90,10 @@ impl super::File for BufWriter<StdFile> {
   }
 
   fn size(&self) -> Result<u64, Self::Error> {
-    self.get_ref().metadata().map(|m| m.len()).map_err(Into::into)
+    self
+      .get_ref()
+      .metadata()
+      .map(|m| m.len())
+      .map_err(Into::into)
   }
 }

@@ -15,7 +15,8 @@ impl File for Vec<u8> {
 
   fn open(opts: &Self::Options) -> Result<(bool, Self), Self::Error>
   where
-    Self: Sized {
+    Self: Sized,
+  {
     Ok((true, Vec::with_capacity(*opts)))
   }
 
@@ -85,4 +86,3 @@ impl File for Vec<u8> {
 //     self.last_fid
 //   }
 // }
-

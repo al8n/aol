@@ -23,12 +23,12 @@ pub trait Manifest: Default {
   fn creations(&self) -> u64;
 
   /// Returns the latest file id.
-  /// 
+  ///
   /// The semantics of this method is similar to `AtomicU32::load(ordering)`.
   fn latest(&self) -> u32;
 
   /// Returns the next file id.
-  /// 
+  ///
   /// The semantics of this method is similar to `AtomicU32::fetch_add(1, ordering)`.
   fn next(&self) -> u32;
 }
