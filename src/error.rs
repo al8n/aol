@@ -43,13 +43,13 @@ pub enum Error<F: super::File, D: super::Data> {
     found: u16,
   },
   /// Corrupted manifest file: entry checksum mismatch.
-  #[error("corrupted manifest file: entry checksum mismatch")]
+  #[error("entry checksum mismatch")]
   #[cfg(feature = "std")]
   #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
   ChecksumMismatch,
 
   /// Corrupted manifest file: not enough bytes to decode manifest entry.
-  #[error("corrupted manifest file: not enough bytes to decode manifest entry")]
+  #[error("corrupted manifest file")]
   #[cfg(feature = "std")]
   #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
   Corrupted,

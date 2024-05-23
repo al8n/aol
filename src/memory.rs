@@ -8,9 +8,6 @@
 
 use super::*;
 
-#[cfg(not(feature = "std"))]
-use std::vec::Vec;
-
 impl File for Vec<u8> {
   type Options = usize;
 

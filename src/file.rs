@@ -34,7 +34,7 @@ impl super::File for StdFile {
   }
 
   fn flush(&mut self) -> Result<(), Self::Error> {
-    Write::flush(self)
+    self.sync_data()
   }
 
   fn sync_all(&self) -> Result<(), Self::Error> {
@@ -77,7 +77,7 @@ impl super::File for BufWriter<StdFile> {
   }
 
   fn flush(&mut self) -> Result<(), Self::Error> {
-    Write::flush(self)
+    Write::flush(self).and_then(|_| self.get_mut().sync_data())
   }
 
   fn sync_all(&self) -> Result<(), Self::Error> {

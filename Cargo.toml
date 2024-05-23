@@ -18,16 +18,12 @@ harness = false
 default = ["std"]
 alloc = []
 std = ["thiserror"]
-nightly = []
-memmap = ["memmap2"]
 
 [dependencies]
 bitflags = "2"
 crc32fast = "1"
 paste = "1"
 hashbrown = { version = "0.14", optional = true }
-memmap2 = { version = "0.9", optional = true }
-rayon = { version = "1", optional = true }
 serde = { version = "1", optional = true, features = ["derive"] }
 thiserror = { version = "1", optional = true }
 
