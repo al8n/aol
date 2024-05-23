@@ -1,20 +1,21 @@
 use std::{
   fs::{File as StdFile, OpenOptions},
   io::{self, BufWriter, Read, Write},
-  path::PathBuf,
+  path::Path,
 };
 
 use super::*;
 
 impl super::File for StdFile {
-  type Options = PathBuf;
+  type Options = ();
 
   type Error = io::Error;
 
-  fn open(path: &Self::Options) -> Result<(bool, Self), Self::Error>
+  fn open<P: AsRef<Path>>(path: P, _opts: Self::Options) -> Result<(bool, Self), Self::Error>
   where
     Self: Sized,
   {
+    let path = path.as_ref();
     let existing = path.exists();
     OpenOptions::new()
       .read(true)
@@ -51,22 +52,31 @@ impl super::File for StdFile {
 }
 
 impl super::File for BufWriter<StdFile> {
-  type Options = PathBuf;
+  type Options = Option<usize>;
 
   type Error = io::Error;
 
-  fn open(opts: &Self::Options) -> Result<(bool, Self), Self::Error>
+  fn open<P: AsRef<Path>>(path: P, opts: Self::Options) -> Result<(bool, Self), Self::Error>
   where
     Self: Sized,
   {
-    let existing = opts.exists();
+    let path = path.as_ref();
+    let existing = path.exists();
     OpenOptions::new()
       .read(true)
       .create(true)
       .truncate(false)
       .append(true)
-      .open(opts)
-      .map(|f| (existing, BufWriter::new(f)))
+      .open(path)
+      .map(|f| {
+        (
+          existing,
+          BufWriter::with_capacity(
+            opts.unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize),
+            f,
+          ),
+        )
+      })
   }
 
   fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {

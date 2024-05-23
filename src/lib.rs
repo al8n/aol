@@ -358,7 +358,16 @@ pub trait File {
   type Error: core::fmt::Debug + core::fmt::Display;
 
   /// Open a manifest file with the given options, returning the file and whether it's a new file.
-  fn open(opts: &Self::Options) -> Result<(bool, Self), Self::Error>
+  #[cfg(feature = "std")]
+  fn open<P: AsRef<std::path::Path>>(
+    path: P,
+    opts: Self::Options,
+  ) -> Result<(bool, Self), Self::Error>
+  where
+    Self: Sized;
+
+  #[cfg(not(feature = "std"))]
+  fn open(opts: Self::Options) -> Result<(bool, Self), Self::Error>
   where
     Self: Sized;
 
@@ -382,17 +391,9 @@ pub trait File {
 }
 
 /// Options for the manifest file.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-  feature = "serde",
-  serde(bound(
-    serialize = "F::Options: serde::Serialize",
-    deserialize = "F::Options: serde::Deserialize<'de>"
-  ))
-)]
-pub struct Options<F: File> {
-  #[cfg_attr(feature = "serde", serde(rename = "file_options"))]
-  opts: F::Options,
+pub struct Options {
   external_magic: u16,
   magic: u16,
   rewrite_threshold: u64,
@@ -400,57 +401,24 @@ pub struct Options<F: File> {
   sync_on_write: bool,
 }
 
-impl<F: File> core::fmt::Debug for Options<F>
-where
-  F::Options: core::fmt::Debug,
-{
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct(core::any::type_name::<Self>())
-      .field("file_options", &self.opts)
-      .field("external_magic", &self.external_magic)
-      .field("magic", &self.magic)
-      .field("rewrite_threshold", &self.rewrite_threshold)
-      .field("deletions_ratio", &self.deletions_ratio)
-      .finish()
+impl Default for Options {
+  #[inline]
+  fn default() -> Self {
+    Self::new()
   }
 }
 
-impl<F: File> Clone for Options<F>
-where
-  F::Options: Clone,
-{
-  fn clone(&self) -> Self {
-    Self {
-      opts: self.opts.clone(),
-      external_magic: self.external_magic,
-      magic: self.magic,
-      rewrite_threshold: self.rewrite_threshold,
-      deletions_ratio: self.deletions_ratio,
-      sync_on_write: self.sync_on_write,
-    }
-  }
-}
-
-impl<F: File> Copy for Options<F> where F::Options: Copy {}
-
-impl<F: File> Options<F> {
+impl Options {
   /// Create a new Options with the given file options
   #[inline]
-  pub const fn new(opts: F::Options) -> Self {
+  pub const fn new() -> Self {
     Self {
-      opts,
       external_magic: 0,
       magic: 0,
       rewrite_threshold: MANIFEST_DELETIONS_REWRITE_THRESHOLD,
       deletions_ratio: MANIFEST_DELETIONS_RATIO,
       sync_on_write: true,
     }
-  }
-
-  /// Get the file options.
-  #[inline]
-  pub const fn file_options(&self) -> &F::Options {
-    &self.opts
   }
 
   /// Get the external magic.
@@ -615,113 +583,52 @@ impl<D> Entry<D> {
 /// | ...                  | ...                      | ...                   | ...                   | ...                   |
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 /// ```
-pub struct ManifestFile<F: File, M: Manifest, C = Crc32> {
-  opts: Options<F>,
+#[derive(Debug)]
+pub struct ManifestFile<F: File, M, C = Crc32> {
+  opts: Options,
   file: F,
   manifest: M,
   _checksumer: core::marker::PhantomData<C>,
 }
 
+impl<F, M, C> Clone for ManifestFile<F, M, C>
+where
+  F::Options: Clone,
+  F: File + Clone,
+  M: Clone,
+  C: Clone,
+{
+  fn clone(&self) -> Self {
+    Self {
+      file: self.file.clone(),
+      manifest: self.manifest.clone(),
+      opts: self.opts.clone(),
+      _checksumer: core::marker::PhantomData,
+    }
+  }
+}
+
 impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
   /// Open and replay the manifest file.
-  pub fn open(opts: Options<F>) -> Result<Self, Error<F, M::Data>> {
-    let (existing, mut file) = F::open(opts.file_options()).map_err(Error::io)?;
+  #[cfg(feature = "std")]
+  #[inline]
+  pub fn open<P: AsRef<std::path::Path>>(
+    path: P,
+    file_opts: F::Options,
+    opts: Options,
+  ) -> Result<Self, Error<F, M::Data>> {
+    let (existing, file) = F::open(path, file_opts).map_err(Error::io)?;
 
-    if !existing {
-      let mut buf = [0; MANIFEST_HEADER_SIZE];
-      buf[..MAGIC_TEXT_LEN].copy_from_slice(MAGIC_TEXT);
-      buf[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN]
-        .copy_from_slice(&opts.external_magic.to_le_bytes());
-      buf[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE]
-        .copy_from_slice(&opts.magic.to_le_bytes());
-      file.write_all(&buf).map_err(Error::io)?;
-      file.flush().map_err(Error::io)?;
+    Self::open_in(file, existing, opts)
+  }
 
-      return Ok(Self {
-        opts,
-        file,
-        manifest: M::default(),
-        _checksumer: core::marker::PhantomData,
-      });
-    }
+  /// Open and replay the manifest file.
+  #[cfg(not(feature = "std"))]
+  #[inline]
+  pub fn open(file_opts: F::Options, opts: Options) -> Result<Self, Error<F, M::Data>> {
+    let (existing, file) = F::open(file_opts).map_err(Error::io)?;
 
-    let size = file.size().map_err(Error::io)?;
-    let mut header = [0; MANIFEST_HEADER_SIZE];
-    file.read_exact(&mut header).map_err(Error::io)?;
-
-    if &header[..MAGIC_TEXT_LEN] != MAGIC_TEXT {
-      return Err(Error::BadMagicText);
-    }
-
-    let external = u16::from_le_bytes(
-      header[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN]
-        .try_into()
-        .unwrap(),
-    );
-    if external != opts.external_magic {
-      return Err(Error::BadExternalMagic {
-        expected: opts.external_magic,
-        found: external,
-      });
-    }
-
-    let version = u16::from_le_bytes(
-      header[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE]
-        .try_into()
-        .unwrap(),
-    );
-    if version != opts.magic {
-      return Err(Error::BadMagic {
-        expected: opts.magic,
-        found: version,
-      });
-    }
-
-    let encoded_entry_size = FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE;
-
-    let num_entries = (size - MANIFEST_HEADER_SIZE as u64) / encoded_entry_size as u64;
-    let remaining = (size - MANIFEST_HEADER_SIZE as u64) % encoded_entry_size as u64;
-    if remaining != 0 {
-      return Err(Error::Corrupted);
-    }
-
-    let mut manifest = M::default();
-
-    for _ in 0..num_entries {
-      let ent = if encoded_entry_size > MAX_INLINE_SIZE {
-        let mut buf = std::vec![0; encoded_entry_size];
-        file.read_exact(&mut buf).map_err(Error::io)?;
-        Entry::decode::<C>(&buf).map_err(|e| match e {
-          Some(e) => Error::data(e),
-          None => Error::ChecksumMismatch,
-        })?
-      } else {
-        let mut buf = [0; MAX_INLINE_SIZE];
-        file.read_exact(&mut buf).map_err(Error::io)?;
-
-        Entry::decode::<C>(&buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE]).map_err(
-          |e| match e {
-            Some(e) => Error::data(e),
-            None => Error::ChecksumMismatch,
-          },
-        )?
-      };
-
-      manifest.insert(ent);
-    }
-
-    let mut this = Self {
-      file,
-      manifest,
-      opts,
-      _checksumer: core::marker::PhantomData,
-    };
-
-    if this.should_rewrite() {
-      return this.rewrite().map(|_| this);
-    }
-
-    Ok(this)
+    Self::open_in(file, existing, opts)
   }
 
   /// Flush the manifest file.
@@ -734,6 +641,12 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
   #[inline]
   pub fn sync_all(&self) -> Result<(), Error<F, M::Data>> {
     self.file.sync_all().map_err(Error::io)
+  }
+
+  /// Returns the options of the manifest file.
+  #[inline]
+  pub const fn options(&self) -> &Options {
+    &self.opts
   }
 
   /// Returns the latest fid.
@@ -802,6 +715,110 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
         })
         .map_err(Error::io)
     }
+  }
+
+  fn open_in(mut file: F, existing: bool, opts: Options) -> Result<Self, Error<F, M::Data>> {
+    let Options {
+      magic,
+      external_magic,
+      ..
+    } = opts;
+
+    if !existing {
+      let mut buf = [0; MANIFEST_HEADER_SIZE];
+      buf[..MAGIC_TEXT_LEN].copy_from_slice(MAGIC_TEXT);
+      buf[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN]
+        .copy_from_slice(&external_magic.to_le_bytes());
+      buf[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE]
+        .copy_from_slice(&magic.to_le_bytes());
+      file.write_all(&buf).map_err(Error::io)?;
+      file.flush().map_err(Error::io)?;
+
+      return Ok(Self {
+        file,
+        manifest: M::default(),
+        _checksumer: core::marker::PhantomData,
+        opts,
+      });
+    }
+
+    let size = file.size().map_err(Error::io)?;
+    let mut header = [0; MANIFEST_HEADER_SIZE];
+    file.read_exact(&mut header).map_err(Error::io)?;
+
+    if &header[..MAGIC_TEXT_LEN] != MAGIC_TEXT {
+      return Err(Error::BadMagicText);
+    }
+
+    let external = u16::from_le_bytes(
+      header[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN]
+        .try_into()
+        .unwrap(),
+    );
+    if external != external_magic {
+      return Err(Error::BadExternalMagic {
+        expected: external_magic,
+        found: external,
+      });
+    }
+
+    let version = u16::from_le_bytes(
+      header[MAGIC_TEXT_LEN + EXTERNAL_MAGIC_LEN..MANIFEST_HEADER_SIZE]
+        .try_into()
+        .unwrap(),
+    );
+    if version != magic {
+      return Err(Error::BadMagic {
+        expected: magic,
+        found: version,
+      });
+    }
+
+    let encoded_entry_size = FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE;
+
+    let num_entries = (size - MANIFEST_HEADER_SIZE as u64) / encoded_entry_size as u64;
+    let remaining = (size - MANIFEST_HEADER_SIZE as u64) % encoded_entry_size as u64;
+    if remaining != 0 {
+      return Err(Error::Corrupted);
+    }
+
+    let mut manifest = M::default();
+
+    for _ in 0..num_entries {
+      let ent = if encoded_entry_size > MAX_INLINE_SIZE {
+        let mut buf = std::vec![0; encoded_entry_size];
+        file.read_exact(&mut buf).map_err(Error::io)?;
+        Entry::decode::<C>(&buf).map_err(|e| match e {
+          Some(e) => Error::data(e),
+          None => Error::ChecksumMismatch,
+        })?
+      } else {
+        let mut buf = [0; MAX_INLINE_SIZE];
+        file.read_exact(&mut buf).map_err(Error::io)?;
+
+        Entry::decode::<C>(&buf[..FIXED_MANIFEST_ENTRY_SIZE + M::Data::ENCODED_SIZE]).map_err(
+          |e| match e {
+            Some(e) => Error::data(e),
+            None => Error::ChecksumMismatch,
+          },
+        )?
+      };
+
+      manifest.insert(ent);
+    }
+
+    let mut this = Self {
+      file,
+      manifest,
+      _checksumer: core::marker::PhantomData,
+      opts,
+    };
+
+    if this.should_rewrite() {
+      return this.rewrite().map(|_| this);
+    }
+
+    Ok(this)
   }
 
   #[inline]

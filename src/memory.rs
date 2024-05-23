@@ -1,18 +1,25 @@
-// #[cfg(feature = "std")]
-// use std::collections::HashSet;
-
-// #[cfg(not(feature = "std"))]
-// use hashbrown::HashSet;
-
-// use super::{ManifestEvent, ManifestEventKind};
-
 use super::*;
 
 impl File for Vec<u8> {
-  type Options = usize;
+  type Options = Option<usize>;
 
   type Error = core::convert::Infallible;
 
+  #[cfg(feature = "std")]
+  fn open<P: AsRef<std::path::Path>>(
+    _path: P,
+    opts: Self::Options,
+  ) -> Result<(bool, Self), Self::Error>
+  where
+    Self: Sized,
+  {
+    Ok((
+      true,
+      Vec::with_capacity(opts.unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize)),
+    ))
+  }
+
+  #[cfg(not(feature = "std"))]
   fn open(opts: &Self::Options) -> Result<(bool, Self), Self::Error>
   where
     Self: Sized,
@@ -46,43 +53,3 @@ impl File for Vec<u8> {
     unreachable!()
   }
 }
-
-// pub struct MemoryManifest {
-//   vlogs: HashSet<u32>,
-//   logs: HashSet<u32>,
-//   last_fid: u32,
-// }
-
-// impl MemoryManifest {
-//   pub fn new() -> Self {
-//     Self {
-//       vlogs: HashSet::new(),
-//       logs: HashSet::new(),
-//       last_fid: 0,
-//     }
-//   }
-
-//   pub fn append(&mut self, event: ManifestEvent) {
-//     match event.kind {
-//       ManifestEventKind::AddVlog => {
-//         self.vlogs.insert(event.fid);
-//         self.last_fid = self.last_fid.max(event.fid);
-//       }
-//       ManifestEventKind::AddLog => {
-//         self.logs.insert(event.fid);
-//         self.last_fid = self.last_fid.max(event.fid);
-//       }
-//       ManifestEventKind::RemoveVlog => {
-//         self.vlogs.remove(&event.fid);
-//       }
-//       ManifestEventKind::RemoveLog => {
-//         self.logs.remove(&event.fid);
-//       }
-//     }
-//   }
-
-//   #[inline]
-//   pub const fn last_fid(&self) -> u32 {
-//     self.last_fid
-//   }
-// }
