@@ -711,6 +711,34 @@ where
   }
 }
 
+impl<F, M, C> ManifestFile<M, F, C> {
+  /// Returns the options of the manifest file.
+  #[inline]
+  pub const fn options(&self) -> &Options {
+    &self.opts
+  }
+
+  /// Returns the current manifest.
+  #[inline]
+  pub const fn manifest(&self) -> &M {
+    &self.manifest
+  }
+}
+
+impl<F: BackedFile, M: BackedManifest, C> ManifestFile<M, F, C> {
+  /// Flush the manifest file.
+  #[inline]
+  pub fn flush(&mut self) -> Result<(), Error<F, M>> {
+    self.file.flush().map_err(Error::io)
+  }
+
+  /// Sync the manifest file.
+  #[inline]
+  pub fn sync_all(&self) -> Result<(), Error<F, M>> {
+    self.file.sync_all().map_err(Error::io)
+  }
+}
+
 impl<F: BackedFile, M: BackedManifest, C: Checksumer> ManifestFile<M, F, C> {
   /// Open and replay the manifest file.
   #[cfg(feature = "std")]
@@ -732,30 +760,6 @@ impl<F: BackedFile, M: BackedManifest, C: Checksumer> ManifestFile<M, F, C> {
     let (existing, file) = F::open(file_opts).map_err(Error::io)?;
 
     Self::open_in(file, existing, opts)
-  }
-
-  /// Flush the manifest file.
-  #[inline]
-  pub fn flush(&mut self) -> Result<(), Error<F, M>> {
-    self.file.flush().map_err(Error::io)
-  }
-
-  /// Sync the manifest file.
-  #[inline]
-  pub fn sync_all(&self) -> Result<(), Error<F, M>> {
-    self.file.sync_all().map_err(Error::io)
-  }
-
-  /// Returns the options of the manifest file.
-  #[inline]
-  pub const fn options(&self) -> &Options {
-    &self.opts
-  }
-
-  /// Returns the current manifest.
-  #[inline]
-  pub const fn manifest(&self) -> &M {
-    &self.manifest
   }
 
   /// Append an entry to the manifest file.
