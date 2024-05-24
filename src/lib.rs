@@ -531,6 +531,7 @@ pub trait File {
   where
     Self: Sized;
 
+  /// Open a manifest file with the given options, returning the file and whether it's a new file.
   #[cfg(not(feature = "std"))]
   fn open(opts: Self::Options) -> Result<(bool, Self), Self::Error>
   where

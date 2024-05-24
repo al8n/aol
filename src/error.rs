@@ -1,17 +1,12 @@
 /// Errors for manifest file.
 #[derive(Debug)]
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
-#[cfg_attr(not(feature = "std"), derive(parse_display::Display))]
 pub enum Error<F: super::File, M: super::Manifest> {
   /// Manifest has bad magic.
-  #[error("manifest has bad magic text")]
-  #[cfg(feature = "std")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+  #[cfg_attr(feature = "std", error("manifest has bad magic text"))]
   BadMagicText,
   /// Cannot open manifest because the external magic doesn't match.
-  #[error("cannot open manifest because the external magic doesn't match. expected {expected}, found {found}")]
-  #[cfg(feature = "std")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+  #[cfg_attr(feature = "std", error("cannot open manifest because the external magic doesn't match. expected {expected}, found {found}"))]
   BadExternalMagic {
     /// Expected external magic.
     expected: u16,
@@ -19,27 +14,25 @@ pub enum Error<F: super::File, M: super::Manifest> {
     found: u16,
   },
   /// Cannot open manifest because the magic doesn't match.
-  #[error(
-    "cannot open manifest because the magic doesn't match. expected {expected}, found {found}"
+  #[cfg_attr(
+    feature = "std",
+    error(
+      "cannot open manifest because the magic doesn't match. expected {expected}, found {found}"
+    )
   )]
-  #[cfg(feature = "std")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
   BadMagic {
     /// Expected magic.
     expected: u16,
     /// Found magic.
     found: u16,
   },
+
   /// Corrupted manifest file: entry checksum mismatch.
-  #[error("entry checksum mismatch")]
-  #[cfg(feature = "std")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+  #[cfg_attr(feature = "std", error("entry checksum mismatch"))]
   ChecksumMismatch,
 
   /// Corrupted manifest file: not enough bytes to decode manifest entry.
-  #[error("entry data len {len} is greater than the remaining file size {remaining}, manifest file might be corrupted")]
-  #[cfg(feature = "std")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+  #[cfg_attr(feature = "std", error("entry data len {len} is greater than the remaining file size {remaining}, manifest file might be corrupted"))]
   EntryTooLarge {
     /// Entry data len.
     len: u32,
@@ -65,6 +58,23 @@ impl<F: super::File, M: super::Manifest> core::fmt::Display for Error<F, M> {
   #[inline]
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
+      Self::BadExternalMagic { expected, found } => write!(
+        f,
+        "cannot open manifest because the external magic doesn't match. expected {}, found {}",
+        expected, found
+      ),
+      Self::BadMagic { expected, found } => write!(
+        f,
+        "cannot open manifest because the magic doesn't match. expected {}, found {}",
+        expected, found
+      ),
+      Self::BadMagicText => write!(f, "manifest has bad magic text"),
+      Self::ChecksumMismatch => write!(f, "entry checksum mismatch"),
+      Self::EntryTooLarge { len, remaining } => write!(
+        f,
+        "entry data len {} is greater than the remaining file size {}, manifest file might be corrupted",
+        len, remaining
+      ),
       Self::Data(err) => err.fmt(f),
       Self::Manifest(err) => err.fmt(f),
       Self::IO(err) => err.fmt(f),

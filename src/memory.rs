@@ -20,11 +20,14 @@ impl File for Vec<u8> {
   }
 
   #[cfg(not(feature = "std"))]
-  fn open(opts: &Self::Options) -> Result<(bool, Self), Self::Error>
+  fn open(opts: Self::Options) -> Result<(bool, Self), Self::Error>
   where
     Self: Sized,
   {
-    Ok((true, Vec::with_capacity(*opts)))
+    Ok((
+      true,
+      Vec::with_capacity(opts.unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize)),
+    ))
   }
 
   fn read_exact(&mut self, _buf: &mut [u8]) -> Result<(), Self::Error> {
