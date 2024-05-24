@@ -23,17 +23,17 @@ use core::mem;
 pub mod error;
 use error::Error;
 
-/// In memory manifest file implementation.
-pub mod memory;
+/// The underlying file for [`ManifestFile`].
+pub mod file;
+pub use file::{BackedFile, BackedFileError};
 
-/// Manifest file implementation based on [`std::fs::File`](std::fs::File).
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub mod file;
+pub use file::{File, FileOptions};
 
 /// Some [`Manifest`](crate::manifest::Manifest) implementations.
 pub mod manifest;
-use manifest::Manifest;
+pub use manifest::*;
 
 const MANIFEST_DELETIONS_REWRITE_THRESHOLD: u64 = 10000;
 const MANIFEST_DELETIONS_RATIO: u64 = 10;
@@ -446,116 +446,6 @@ impl Checksumer for Crc32 {
   }
 }
 
-/// Data for the [`Entry`].
-pub trait Data: Sized {
-  /// The error type returned by encoding.
-  #[cfg(feature = "std")]
-  type Error: std::error::Error;
-
-  /// The error type returned by encoding.
-  #[cfg(not(feature = "std"))]
-  type Error: core::fmt::Debug + core::fmt::Display;
-
-  /// Returns the encoded size of the data.
-  fn encoded_size(&self) -> usize;
-
-  /// Encodes the data into the buffer, returning the number of bytes written.
-  fn encode(&self, buf: &mut [u8]) -> Result<usize, Self::Error>;
-
-  /// Decodes the data from the buffer, returning the number of bytes read.
-  fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error>;
-}
-
-impl Data for () {
-  type Error = core::convert::Infallible;
-
-  #[inline]
-  fn encoded_size(&self) -> usize {
-    0
-  }
-
-  #[inline]
-  fn encode(&self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
-    Ok(0)
-  }
-
-  #[inline]
-  fn decode(_buf: &[u8]) -> Result<(usize, Self), Self::Error> {
-    Ok((0, ()))
-  }
-}
-
-/// The error type for the file.
-#[cfg(feature = "std")]
-pub trait FileError: std::error::Error {
-  /// Returns whether the error is EOF.
-  fn is_eof(&self) -> bool;
-}
-
-#[cfg(feature = "std")]
-impl FileError for std::io::Error {
-  #[inline]
-  fn is_eof(&self) -> bool {
-    self.kind() == std::io::ErrorKind::UnexpectedEof
-  }
-}
-
-impl FileError for core::convert::Infallible {
-  #[inline]
-  fn is_eof(&self) -> bool {
-    false
-  }
-}
-
-/// The error type for the file.
-#[cfg(not(feature = "std"))]
-pub trait FileError: core::fmt::Debug + core::fmt::Display {
-  /// Returns whether the error is EOF.
-  fn is_eof(&self) -> bool;
-}
-
-/// The underlying file.
-pub trait File {
-  /// Options for opening a manifest file.
-  type Options;
-
-  /// Error type for the file.
-  type Error: FileError;
-
-  /// Open a manifest file with the given options, returning the file and whether it's a new file.
-  #[cfg(feature = "std")]
-  fn open<P: AsRef<std::path::Path>>(
-    path: P,
-    opts: Self::Options,
-  ) -> Result<(bool, Self), Self::Error>
-  where
-    Self: Sized;
-
-  /// Open a manifest file with the given options, returning the file and whether it's a new file.
-  #[cfg(not(feature = "std"))]
-  fn open(opts: Self::Options) -> Result<(bool, Self), Self::Error>
-  where
-    Self: Sized;
-
-  /// Read exactly `buf.len()` bytes into the buffer.
-  fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Self::Error>;
-
-  /// Write all the data to the file.
-  fn write_all(&mut self, data: &[u8]) -> Result<(), Self::Error>;
-
-  /// Flush the file.
-  fn flush(&mut self) -> Result<(), Self::Error>;
-
-  /// Sync the file.
-  fn sync_all(&self) -> Result<(), Self::Error>;
-
-  /// Truncate the file.
-  fn truncate(&mut self, len: u64) -> Result<(), Self::Error>;
-
-  /// Returns the size of the file.
-  fn size(&self) -> Result<u64, Self::Error>;
-}
-
 /// Options for the manifest file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -775,169 +665,13 @@ impl Options {
   }
 }
 
-/// The entry in the manifest file.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Entry<D> {
-  flag: EntryFlags,
-  data: D,
-}
-
-impl<D> Entry<D> {
-  /// Create a new creation entry.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::Entry;
-  ///
-  /// let entry = Entry::<()>::creation(());
-  /// ```
-  #[inline]
-  pub const fn creation(data: D) -> Self {
-    Self {
-      flag: EntryFlags::creation(),
-      data,
-    }
-  }
-
-  /// Create a new deletion entry.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::Entry;
-  ///
-  /// let entry = Entry::<()>::deletion(());
-  /// ```
-  #[inline]
-  pub const fn deletion(data: D) -> Self {
-    Self {
-      flag: EntryFlags::deletion(),
-      data,
-    }
-  }
-
-  /// Create a new creation entry with custom flags.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::{Entry, CustomFlags};
-  ///
-  /// let entry = Entry::creation_with_custom_flags(CustomFlags::empty(), ());
-  /// ```
-  #[inline]
-  pub const fn creation_with_custom_flags(flag: CustomFlags, data: D) -> Self {
-    Self {
-      flag: EntryFlags::creation_with_custom_flag(flag),
-      data,
-    }
-  }
-
-  /// Create a new deletion entry with custom flags.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::{Entry, CustomFlags};
-  ///
-  /// let entry = Entry::deletion_with_custom_flags(CustomFlags::empty(), ());
-  /// ```
-  #[inline]
-  pub const fn deletion_with_custom_flags(flag: CustomFlags, data: D) -> Self {
-    Self {
-      flag: EntryFlags::deletion_with_custom_flag(flag),
-      data,
-    }
-  }
-
-  /// Get the flag.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::{Entry, EntryFlags, CustomFlags};
-  ///
-  /// let entry = Entry::new(EntryFlags::creation(CustomFlags::empty()), ());
-  ///
-  /// assert_eq!(entry.flag(), EntryFlags::creation(CustomFlags::empty()));
-  /// ```
-  #[inline]
-  pub const fn flag(&self) -> EntryFlags {
-    self.flag
-  }
-
-  /// Get the data.
-  #[inline]
-  pub const fn data(&self) -> &D {
-    &self.data
-  }
-
-  #[inline]
-  fn encode<C>(&self, data_encoded_len: usize, buf: &mut [u8]) -> Result<usize, D::Error>
-  where
-    C: Checksumer,
-    D: Data,
-  {
-    let mut cursor = 0;
-    buf[cursor] = self.flag.value;
-    cursor += 1;
-    buf[cursor..cursor + LEN_BUF_SIZE].copy_from_slice(&(data_encoded_len as u32).to_le_bytes());
-    cursor += LEN_BUF_SIZE;
-    let encoded = self.data.encode(&mut buf[cursor..])?;
-    cursor += encoded;
-
-    let cks = C::checksum(&buf[..cursor]).to_le_bytes();
-    buf[cursor..cursor + CHECKSUM_SIZE].copy_from_slice(&cks);
-    cursor += CHECKSUM_SIZE;
-
-    debug_assert_eq!(
-      cursor,
-      FIXED_MANIFEST_ENTRY_SIZE + data_encoded_len,
-      "invalid encoded size, expected {} got {}",
-      cursor,
-      FIXED_MANIFEST_ENTRY_SIZE + data_encoded_len
-    );
-    Ok(cursor)
-  }
-
-  #[inline]
-  fn decode<C>(buf: &[u8]) -> Result<Self, Option<D::Error>>
-  where
-    C: Checksumer,
-    D: Data,
-  {
-    let flag = EntryFlags { value: buf[0] };
-
-    let mut cursor = 1;
-    let len = u32::from_le_bytes(buf[cursor..cursor + LEN_BUF_SIZE].try_into().unwrap());
-    cursor += LEN_BUF_SIZE;
-    let (read, data) = D::decode(&buf[cursor..cursor + len as usize]).map_err(Some)?;
-    debug_assert_eq!(
-      read, len as usize,
-      "invalid decoded size, expected {} got {}",
-      read, len
-    );
-
-    cursor += read;
-    let cks = C::checksum(&buf[..cursor]).to_le_bytes();
-    cursor += CHECKSUM_SIZE;
-    if cks != buf[cursor..cursor + CHECKSUM_SIZE] {
-      return Err(None);
-    }
-
-    Ok(Self { flag, data })
-  }
-}
-
 /// The default underlying file for [`ManifestFile`].
 #[cfg(feature = "std")]
-pub type DefaultUnderlyingFile = file::File;
+pub type DefaultBackedFile = File;
 
 /// The default underlying file for [`ManifestFile`].
 #[cfg(not(feature = "std"))]
-pub type DefaultUnderlyingFile = Vec<u8>;
+pub type DefaultBackedFile = Vec<u8>;
 
 /// Generic manifest file implementation.
 ///
@@ -955,7 +689,7 @@ pub type DefaultUnderlyingFile = Vec<u8>;
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 /// ```
 #[derive(Debug)]
-pub struct ManifestFile<M, F = DefaultUnderlyingFile, C = Crc32> {
+pub struct ManifestFile<M, F = DefaultBackedFile, C = Crc32> {
   opts: Options,
   file: F,
   manifest: M,
@@ -977,7 +711,7 @@ where
   }
 }
 
-impl<F: File, M: Manifest, C: Checksumer> ManifestFile<M, F, C> {
+impl<F: BackedFile, M: BackedManifest, C: Checksumer> ManifestFile<M, F, C> {
   /// Open and replay the manifest file.
   #[cfg(feature = "std")]
   #[inline]
@@ -1245,7 +979,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<M, F, C> {
   }
 }
 
-fn append<F: File, M: Manifest, C: Checksumer>(
+fn append<F: BackedFile, M: BackedManifest, C: Checksumer>(
   file: &mut F,
   ent: &Entry<M::Data>,
   sync: bool,

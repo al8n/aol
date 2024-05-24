@@ -1,6 +1,11 @@
 use super::*;
 
-impl File for Vec<u8> {
+#[cfg(not(feature = "std"))]
+use std::vec::Vec;
+
+use crate::MANIFEST_DELETIONS_REWRITE_THRESHOLD;
+
+impl BackedFile for Vec<u8> {
   type Options = Option<usize>;
 
   type Error = core::convert::Infallible;
@@ -15,7 +20,7 @@ impl File for Vec<u8> {
   {
     Ok((
       true,
-      Vec::with_capacity(opts.unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize)),
+      Vec::with_capacity(opts.unwrap_or(MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize)),
     ))
   }
 
@@ -26,7 +31,7 @@ impl File for Vec<u8> {
   {
     Ok((
       true,
-      Vec::with_capacity(opts.unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize)),
+      Vec::with_capacity(opts.unwrap_or(MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize)),
     ))
   }
 

@@ -87,7 +87,7 @@ impl Manifest {
   }
 }
 
-impl crate::Manifest for Manifest {
+impl crate::BackedManifest for Manifest {
   type Data = Fid;
 
   type Error = core::convert::Infallible;

@@ -80,7 +80,7 @@ impl<D> Manifest<D> {
   }
 }
 
-impl<D: Data> crate::Manifest for Manifest<D> {
+impl<D: Data> crate::BackedManifest for Manifest<D> {
   type Data = ManifestChange<D>;
 
   type Error = Error;

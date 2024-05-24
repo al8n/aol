@@ -1,160 +1,77 @@
-use std::{
-  fs::{File as StdFile, OpenOptions},
-  io::{self, BufReader, BufWriter, Read, Write},
-  path::Path,
-};
+mod memory;
 
-use super::*;
+#[cfg(feature = "std")]
+mod disk;
+#[cfg(feature = "std")]
+pub use disk::*;
 
-/// File options.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct FileOptions {
-  #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-  read_buffer_size: Option<usize>,
-  #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
-  write_buffer_size: Option<usize>,
+/// The error type for the file.
+#[cfg(feature = "std")]
+pub trait BackedFileError: std::error::Error {
+  /// Returns whether the error is EOF.
+  fn is_eof(&self) -> bool;
 }
 
-impl Default for FileOptions {
-  /// Create a default `FileOptions`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::file::FileOptions;
-  ///
-  /// let opts = FileOptions::default();
-  /// ```
+#[cfg(feature = "std")]
+impl BackedFileError for std::io::Error {
   #[inline]
-  fn default() -> Self {
-    Self::new()
+  fn is_eof(&self) -> bool {
+    self.kind() == std::io::ErrorKind::UnexpectedEof
   }
 }
 
-impl FileOptions {
-  /// Create a new `FileOptions`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::file::FileOptions;
-  ///
-  /// let opts = FileOptions::new();
-  /// ```
+impl BackedFileError for core::convert::Infallible {
   #[inline]
-  pub const fn new() -> Self {
-    Self {
-      read_buffer_size: None,
-      write_buffer_size: None,
-    }
-  }
-
-  /// Set the read buffer size.
-  ///
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::file::FileOptions;
-  ///
-  ///
-  /// let opts = FileOptions::new().read_buffer_size(1024);
-  /// ```
-  #[inline]
-  pub const fn read_buffer_size(mut self, size: usize) -> Self {
-    self.read_buffer_size = Some(size);
-    self
-  }
-
-  /// Set the write buffer size.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use manifile::file::FileOptions;
-  ///
-  /// let opts = FileOptions::new().write_buffer_size(1024);
-  /// ```
-  #[inline]
-  pub const fn write_buffer_size(mut self, size: usize) -> Self {
-    self.write_buffer_size = Some(size);
-    self
+  fn is_eof(&self) -> bool {
+    false
   }
 }
 
-/// [`File`](super::File) trait implementation based `std::fs::File`.
-///
-/// **Note:** This implementation is only for [`ManifestFile`](super::ManifestFile), and cannot be used for other purposes.
-pub struct File {
-  reader: BufReader<StdFile>,
-  writer: BufWriter<StdFile>,
+/// The error type for the file.
+#[cfg(not(feature = "std"))]
+pub trait BackedFileError: core::fmt::Debug + core::fmt::Display {
+  /// Returns whether the error is EOF.
+  fn is_eof(&self) -> bool;
 }
 
-impl super::File for File {
-  type Options = FileOptions;
+/// The underlying file.
+pub trait BackedFile {
+  /// Options for opening a manifest file.
+  type Options;
 
-  type Error = io::Error;
+  /// Error type for the file.
+  type Error: BackedFileError;
 
-  fn open<P: AsRef<Path>>(path: P, opts: Self::Options) -> Result<(bool, Self), Self::Error>
+  /// Open a manifest file with the given options, returning the file and whether it's a new file.
+  #[cfg(feature = "std")]
+  fn open<P: AsRef<std::path::Path>>(
+    path: P,
+    opts: Self::Options,
+  ) -> Result<(bool, Self), Self::Error>
   where
-    Self: Sized,
-  {
-    let path = path.as_ref();
-    let existing = path.exists();
-    OpenOptions::new()
-      .read(true)
-      .create(true)
-      .truncate(false)
-      .append(true)
-      .open(path)
-      .and_then(|f| {
-        Ok((
-          existing,
-          Self {
-            reader: BufReader::with_capacity(
-              opts
-                .read_buffer_size
-                .unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize),
-              f.try_clone()?,
-            ),
-            writer: BufWriter::with_capacity(
-              opts
-                .write_buffer_size
-                .unwrap_or(super::MANIFEST_DELETIONS_REWRITE_THRESHOLD as usize),
-              f,
-            ),
-          },
-        ))
-      })
-  }
+    Self: Sized;
 
-  fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Self::Error> {
-    self.reader.read_exact(buf)
-  }
+  /// Open a manifest file with the given options, returning the file and whether it's a new file.
+  #[cfg(not(feature = "std"))]
+  fn open(opts: Self::Options) -> Result<(bool, Self), Self::Error>
+  where
+    Self: Sized;
 
-  fn write_all(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-    self.writer.write_all(data)
-  }
+  /// Read exactly `buf.len()` bytes into the buffer.
+  fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), Self::Error>;
 
-  fn flush(&mut self) -> Result<(), Self::Error> {
-    self.writer.get_ref().sync_data()
-  }
+  /// Write all the data to the file.
+  fn write_all(&mut self, data: &[u8]) -> Result<(), Self::Error>;
 
-  fn sync_all(&self) -> Result<(), Self::Error> {
-    self.writer.get_ref().sync_all()
-  }
+  /// Flush the file.
+  fn flush(&mut self) -> Result<(), Self::Error>;
 
-  fn truncate(&mut self, len: u64) -> Result<(), Self::Error> {
-    self.writer.get_ref().set_len(len)
-  }
+  /// Sync the file.
+  fn sync_all(&self) -> Result<(), Self::Error>;
 
-  fn size(&self) -> Result<u64, Self::Error> {
-    self
-      .reader
-      .get_ref()
-      .metadata()
-      .map(|m| m.len())
-      .map_err(Into::into)
-  }
+  /// Truncate the file.
+  fn truncate(&mut self, len: u64) -> Result<(), Self::Error>;
+
+  /// Returns the size of the file.
+  fn size(&self) -> Result<u64, Self::Error>;
 }

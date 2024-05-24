@@ -1,7 +1,9 @@
+use super::*;
+
 /// Errors for manifest file.
 #[derive(Debug)]
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub enum Error<F: super::File, M: super::Manifest> {
+pub enum Error<F: BackedFile, M: BackedManifest> {
   /// Manifest has bad magic.
   #[cfg_attr(feature = "std", error("manifest has bad magic text"))]
   BadMagicText,
@@ -42,7 +44,7 @@ pub enum Error<F: super::File, M: super::Manifest> {
 
   /// Encode/decode data error.
   #[cfg_attr(feature = "std", error(transparent))]
-  Data(<M::Data as super::Data>::Error),
+  Data(<M::Data as Data>::Error),
 
   /// Manifest error.
   #[cfg_attr(feature = "std", error(transparent))]
@@ -54,7 +56,7 @@ pub enum Error<F: super::File, M: super::Manifest> {
 }
 
 #[cfg(not(feature = "std"))]
-impl<F: super::File, M: super::Manifest> core::fmt::Display for Error<F, M> {
+impl<F: BackedFile, M: BackedManifest> core::fmt::Display for Error<F, M> {
   #[inline]
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
@@ -82,7 +84,7 @@ impl<F: super::File, M: super::Manifest> core::fmt::Display for Error<F, M> {
   }
 }
 
-impl<F: super::File, M: super::Manifest> Error<F, M> {
+impl<F: BackedFile, M: BackedManifest> Error<F, M> {
   /// Create a new `Error` from an I/O error.
   #[inline]
   pub const fn io(err: F::Error) -> Self {
@@ -91,7 +93,7 @@ impl<F: super::File, M: super::Manifest> Error<F, M> {
 
   /// Create a new `Error` from a data error.
   #[inline]
-  pub const fn data(err: <M::Data as super::Data>::Error) -> Self {
+  pub const fn data(err: <M::Data as Data>::Error) -> Self {
     Self::Data(err)
   }
 
