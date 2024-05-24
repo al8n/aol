@@ -1,7 +1,10 @@
 /// [`Manifest`](crate::manifest::Manifest) implementors for Wisckey WALs.
 #[cfg(any(feature = "std", feature = "hashbrown"))]
 #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
-pub mod wisckey;
+pub mod wiscask;
+
+/// [`Manifest`](crate::manifest::Manifest) implementors for Wisckey WALs based on LSM model.
+pub mod lsm;
 
 use super::*;
 

@@ -7,6 +7,7 @@
 Generic purpose append only manifest file implementation.
 
 [<img alt="github" src="https://img.shields.io/badge/github-al8n/manifile-8da0cb?style=for-the-badge&logo=Github" height="22">][Github-url]
+<img alt="LoC" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fgist.githubusercontent.com%2Fal8n%2F327b2a8aef9003246e45c6e47fe63937%2Fraw%2Fmanifile" height="22">
 [<img alt="Build" src="https://img.shields.io/github/actions/workflow/status/al8n/manifile/ci.yml?logo=Github-Actions&style=for-the-badge" height="22">][CI-url]
 [<img alt="codecov" src="https://img.shields.io/codecov/c/gh/al8n/manifile?style=for-the-badge&token=6R3QFWRWHL&logo=codecov" height="22">][codecov-url]
 
@@ -24,7 +25,7 @@ English | [简体中文][zh-cn-url]
 
 ```toml
 [dependencies]
-manifile = "0.1"
+manifile = "0.0.0"
 ```
 
 ## File Structure
@@ -33,9 +34,9 @@ manifile = "0.1"
 +----------------------+--------------------------+-----------------------+
 | magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
 +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-| op (1 bit)           | custom flag (7 bits)     | fid (4 bytes)         | data (N bytes)        | checksum (4 bytes)    |
+| op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (N bytes)        | checksum (4 bytes)    |
 +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-| op (1 bit)           | custom flag (7 bits)     | fid (4 bytes)         | data (N bytes)        | checksum (4 bytes)    |
+| op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (N bytes)        | checksum (4 bytes)    |
 +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 | ...                  | ...                      | ...                   | ...                   | ...                   |
 +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
@@ -48,7 +49,7 @@ Apache License (Version 2.0).
 
 See [LICENSE-APACHE](LICENSE-APACHE), [LICENSE-MIT](LICENSE-MIT) for details.
 
-Copyright (c) 2021 Al Liu.
+Copyright (c) 2024 Al Liu.
 
 [Github-url]: https://github.com/al8n/manifile/
 [CI-url]: https://github.com/al8n/manifile/actions/workflows/ci.yml

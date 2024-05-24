@@ -9,11 +9,6 @@ description = "Generic purpose append only manifest file implementation."
 license = "MIT/Apache-2.0"
 rust-version = "1.56"
 
-[[bench]]
-path = "benches/foo.rs"
-name = "foo"
-harness = false
-
 [features]
 default = ["std"]
 alloc = []
@@ -28,18 +23,7 @@ serde = { version = "1", optional = true, features = ["derive"] }
 thiserror = { version = "1", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
 tempfile = "3"
-
-[profile.bench]
-opt-level = 3
-debug = false
-codegen-units = 1
-lto = 'thin'
-incremental = false
-debug-assertions = false
-overflow-checks = false
-rpath = false
 
 [package.metadata.docs.rs]
 all-features = true

@@ -31,11 +31,6 @@ pub mod memory;
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod file;
 
-/// Manifest file implementation based on memory map.
-#[cfg(feature = "memmap2")]
-#[cfg_attr(docsrs, doc(cfg(feature = "memmap2")))]
-pub mod memmap;
-
 /// Some [`Manifest`](crate::manifest::Manifest) implementations.
 pub mod manifest;
 use manifest::Manifest;
@@ -49,7 +44,8 @@ const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
 const MAGIC_LEN: usize = mem::size_of::<u16>();
 const EXTERNAL_MAGIC_LEN: usize = mem::size_of::<u16>();
 const MANIFEST_HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + EXTERNAL_MAGIC_LEN; // magic text + external magic + magic
-const MANIFEST_ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE + CHECKSUM_SIZE; // flag + fid + checksum
+const MANIFEST_ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE; // flag + len
+const FIXED_MANIFEST_ENTRY_SIZE: usize = MANIFEST_ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
 const MAX_INLINE_SIZE: usize = 64;
 const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
 const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
@@ -176,24 +172,61 @@ impl_bitwise_ops! {
 
 impl CustomFlags {
   /// Get a flags value with all known bits set.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let flags = CustomFlags::all();
+  /// ```
   #[inline]
   pub const fn all() -> Self {
     Self(CustomFlagsCore::all())
   }
 
   /// Get a flags value with all known bits unset.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let flags = CustomFlags::empty();
+  /// ```
   #[inline]
   pub const fn empty() -> Self {
     Self(CustomFlagsCore::empty())
   }
 
   /// Whether all set bits in a source flags value are also set in a target flags value.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let flags = CustomFlags::empty();
+  ///
+  /// assert_eq!(flags.contains(CustomFlags::empty()), true);
+  /// ```
   #[inline]
   pub const fn contains(&self, other: Self) -> bool {
     self.0.contains(other.0)
   }
 
   /// The bitwise exclusive-or (`^`) of the bits in two flags values.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let mut flags = CustomFlags::all();
+  /// flags.toggle(CustomFlags::all());
+  ///
+  /// assert_eq!(flags, CustomFlags::empty());
+  /// ```
   #[inline]
   pub fn toggle(&mut self, other: Self) {
     self.0.toggle(other.0);
@@ -201,6 +234,16 @@ impl CustomFlags {
   }
 
   /// The bitwise negation (`!`) of the bits in a flags value, truncating the result.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let flags = CustomFlags::all();
+  ///
+  /// assert_eq!(flags.complement(), CustomFlags::empty());
+  /// ```
   #[inline]
   pub const fn complement(&self) -> Self {
     Self(CustomFlagsCore::from_bits_retain(
@@ -209,12 +252,32 @@ impl CustomFlags {
   }
 
   /// Whether all bits in this flags value are unset.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let flags = CustomFlags::empty();
+  ///
+  /// assert_eq!(flags.is_empty(), true);
+  /// ```
   #[inline]
   pub const fn is_empty(&self) -> bool {
     self.0.is_empty()
   }
 
   /// Whether any bits in this flags value are set.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::CustomFlags;
+  ///
+  /// let flags = CustomFlags::all();
+  ///
+  /// assert_eq!(flags.is_all(), true);
+  /// ```
   #[inline]
   pub const fn is_all(&self) -> bool {
     self.0.is_all()
@@ -265,17 +328,69 @@ impl core::fmt::Debug for EntryFlags {
 }
 
 impl EntryFlags {
-  /// Creates a new [`EntryFlags`] with the deletion flag set
+  /// Creates a new [`EntryFlags`] with the creation flag set
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::EntryFlags;
+  ///
+  /// let entry = EntryFlags::creation();
+  ///
+  /// assert_eq!(entry.is_creation(), true);
+  /// ```
   #[inline]
-  pub const fn deletion(flag: CustomFlags) -> Self {
+  pub const fn creation() -> Self {
+    Self::new(CustomFlags::empty())
+  }
+
+  /// Creates a new [`EntryFlags`] with the deletion flag set
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::EntryFlags;
+  ///
+  /// let entry = EntryFlags::deletion();
+  ///
+  /// assert_eq!(entry.is_deletion(), true);
+  /// ```
+  #[inline]
+  pub const fn deletion() -> Self {
+    Self::new(CustomFlags::empty())
+  }
+
+  /// Creates a new [`EntryFlags`] with the deletion flag set
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::{EntryFlags, CustomFlags};
+  ///
+  /// let entry = EntryFlags::deletion_with_custom_flag(CustomFlags::empty());
+  ///
+  /// assert_eq!(entry.is_deletion(), true);
+  /// ```
+  #[inline]
+  pub const fn deletion_with_custom_flag(flag: CustomFlags) -> Self {
     let mut this = Self::new(flag);
     this.value |= DELETE_FLAG;
     this
   }
 
   /// Creates a new [`EntryFlags`] with the creation flag set
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::{EntryFlags, CustomFlags};
+  ///
+  /// let entry = EntryFlags::creation(CustomFlags::empty());
+  ///
+  /// assert_eq!(entry.is_creation(), true);
+  /// ```
   #[inline]
-  pub const fn creation(flag: CustomFlags) -> Self {
+  pub const fn creation_with_custom_flag(flag: CustomFlags) -> Self {
     let mut this = Self::new(flag);
     this.value &= !DELETE_FLAG;
     this
@@ -370,18 +485,42 @@ impl Data for () {
   }
 }
 
+/// The error type for the file.
+#[cfg(feature = "std")]
+pub trait FileError: std::error::Error {
+  /// Returns whether the error is EOF.
+  fn is_eof(&self) -> bool;
+}
+
+#[cfg(feature = "std")]
+impl FileError for std::io::Error {
+  #[inline]
+  fn is_eof(&self) -> bool {
+    self.kind() == std::io::ErrorKind::UnexpectedEof
+  }
+}
+
+impl FileError for core::convert::Infallible {
+  #[inline]
+  fn is_eof(&self) -> bool {
+    false
+  }
+}
+
+/// The error type for the file.
+#[cfg(not(feature = "std"))]
+pub trait FileError: core::fmt::Debug + core::fmt::Display {
+  /// Returns whether the error is EOF.
+  fn is_eof(&self) -> bool;
+}
+
 /// The underlying file.
 pub trait File {
   /// Options for opening a manifest file.
   type Options;
 
   /// Error type for the file.
-  #[cfg(feature = "std")]
-  type Error: std::error::Error;
-
-  /// Error type for the file.
-  #[cfg(not(feature = "std"))]
-  type Error: core::fmt::Debug + core::fmt::Display;
+  type Error: FileError;
 
   /// Open a manifest file with the given options, returning the file and whether it's a new file.
   #[cfg(feature = "std")]
@@ -428,6 +567,15 @@ pub struct Options {
 }
 
 impl Default for Options {
+  /// Returns the default options.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::default();
+  /// ```
   #[inline]
   fn default() -> Self {
     Self::new()
@@ -436,6 +584,14 @@ impl Default for Options {
 
 impl Options {
   /// Create a new Options with the given file options
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new();
+  /// ```
   #[inline]
   pub const fn new() -> Self {
     Self {
@@ -448,24 +604,64 @@ impl Options {
   }
 
   /// Get the external magic.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.external_magic(), 0);
+  /// ```
   #[inline]
   pub const fn external_magic(&self) -> u16 {
     self.external_magic
   }
 
   /// Get the magic.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.magic(), 0);
+  /// ```
   #[inline]
   pub const fn magic(&self) -> u16 {
     self.magic
   }
 
   /// Get the rewrite threshold.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.rewrite_threshold(), 10000);
+  /// ```
   #[inline]
   pub const fn rewrite_threshold(&self) -> u64 {
     self.rewrite_threshold
   }
 
   /// Get the deletions ratio.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.deletions_ratio(), 10);
+  /// ```
   #[inline]
   pub const fn deletions_ratio(&self) -> u64 {
     self.deletions_ratio
@@ -474,12 +670,32 @@ impl Options {
   /// Get whether flush the data to disk after write.
   ///
   /// Default is `true`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.sync_on_write(), true);
+  /// ```
   #[inline]
   pub const fn sync_on_write(&self) -> bool {
     self.sync_on_write
   }
 
   /// Set the external magic.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new().with_external_magic(1);
+  ///
+  /// assert_eq!(opts.external_magic(), 1);
+  /// ```
   #[inline]
   pub const fn with_external_magic(mut self, external_magic: u16) -> Self {
     self.external_magic = external_magic;
@@ -487,6 +703,16 @@ impl Options {
   }
 
   /// Set the magic.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new().with_magic(1);
+  ///
+  /// assert_eq!(opts.magic(), 1);
+  /// ```
   #[inline]
   pub const fn with_magic(mut self, magic: u16) -> Self {
     self.magic = magic;
@@ -494,6 +720,17 @@ impl Options {
   }
 
   /// Set the rewrite threshold.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new().with_rewrite_threshold(100);
+  ///
+  /// assert_eq!(opts.rewrite_threshold(), 100);
+  ///
+  /// ```
   #[inline]
   pub const fn with_rewrite_threshold(mut self, rewrite_threshold: u64) -> Self {
     self.rewrite_threshold = rewrite_threshold;
@@ -501,6 +738,16 @@ impl Options {
   }
 
   /// Set the deletions ratio.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new().with_deletions_ratio(100);
+  ///
+  /// assert_eq!(opts.deletions_ratio(), 100);
+  /// ```
   #[inline]
   pub const fn with_deletions_ratio(mut self, deletions_ratio: u64) -> Self {
     self.deletions_ratio = deletions_ratio;
@@ -510,6 +757,16 @@ impl Options {
   /// Set whether flush the data to disk after write.
   ///
   ///  Default is `true`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Options;
+  ///
+  /// let opts = Options::new().with_sync_on_write(false);
+  ///
+  /// assert_eq!(opts.sync_on_write(), false);
+  /// ```
   #[inline]
   pub const fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
     self.sync_on_write = sync_on_write;
@@ -526,7 +783,85 @@ pub struct Entry<D> {
 }
 
 impl<D> Entry<D> {
+  /// Create a new creation entry.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Entry;
+  ///
+  /// let entry = Entry::<()>::creation(());
+  /// ```
+  #[inline]
+  pub const fn creation(data: D) -> Self {
+    Self {
+      flag: EntryFlags::creation(),
+      data,
+    }
+  }
+
+  /// Create a new deletion entry.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::Entry;
+  ///
+  /// let entry = Entry::<()>::deletion(());
+  /// ```
+  #[inline]
+  pub const fn deletion(data: D) -> Self {
+    Self {
+      flag: EntryFlags::deletion(),
+      data,
+    }
+  }
+
+  /// Create a new creation entry with custom flags.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::{Entry, CustomFlags};
+  ///
+  /// let entry = Entry::creation_with_custom_flags(CustomFlags::empty(), ());
+  /// ```
+  #[inline]
+  pub const fn creation_with_custom_flags(flag: CustomFlags, data: D) -> Self {
+    Self {
+      flag: EntryFlags::creation_with_custom_flag(flag),
+      data,
+    }
+  }
+
+  /// Create a new deletion entry with custom flags.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::{Entry, CustomFlags};
+  ///
+  /// let entry = Entry::deletion_with_custom_flags(CustomFlags::empty(), ());
+  /// ```
+  #[inline]
+  pub const fn deletion_with_custom_flags(flag: CustomFlags, data: D) -> Self {
+    Self {
+      flag: EntryFlags::deletion_with_custom_flag(flag),
+      data,
+    }
+  }
+
   /// Get the flag.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use manifile::{Entry, EntryFlags, CustomFlags};
+  ///
+  /// let entry = Entry::new(EntryFlags::creation(CustomFlags::empty()), ());
+  ///
+  /// assert_eq!(entry.flag(), EntryFlags::creation(CustomFlags::empty()));
+  /// ```
   #[inline]
   pub const fn flag(&self) -> EntryFlags {
     self.flag
@@ -539,7 +874,7 @@ impl<D> Entry<D> {
   }
 
   #[inline]
-  fn encode<C>(&self, buf: &mut [u8]) -> Result<usize, D::Error>
+  fn encode<C>(&self, data_encoded_len: usize, buf: &mut [u8]) -> Result<usize, D::Error>
   where
     C: Checksumer,
     D: Data,
@@ -547,20 +882,21 @@ impl<D> Entry<D> {
     let mut cursor = 0;
     buf[cursor] = self.flag.value;
     cursor += 1;
-    buf[cursor..cursor + FID_SIZE].copy_from_slice(&self.fid.to_le_bytes());
-    cursor += FID_SIZE;
+    buf[cursor..cursor + LEN_BUF_SIZE].copy_from_slice(&(data_encoded_len as u32).to_le_bytes());
+    cursor += LEN_BUF_SIZE;
     let encoded = self.data.encode(&mut buf[cursor..])?;
-    let cks = C::checksum(&buf[..cursor + encoded]).to_le_bytes();
-    cursor += D::ENCODED_SIZE;
+    cursor += encoded;
+
+    let cks = C::checksum(&buf[..cursor]).to_le_bytes();
     buf[cursor..cursor + CHECKSUM_SIZE].copy_from_slice(&cks);
     cursor += CHECKSUM_SIZE;
 
     debug_assert_eq!(
       cursor,
-      MANIFEST_ENTRY_HEADER_SIZE + D::ENCODED_SIZE,
+      FIXED_MANIFEST_ENTRY_SIZE + data_encoded_len,
       "invalid encoded size, expected {} got {}",
       cursor,
-      MANIFEST_ENTRY_HEADER_SIZE + D::ENCODED_SIZE
+      FIXED_MANIFEST_ENTRY_SIZE + data_encoded_len
     );
     Ok(cursor)
   }
@@ -574,18 +910,33 @@ impl<D> Entry<D> {
     let flag = EntryFlags { value: buf[0] };
 
     let mut cursor = 1;
-    let fid = u32::from_le_bytes(buf[cursor..cursor + FID_SIZE].try_into().unwrap());
-    cursor += FID_SIZE;
-    let (read, data) = D::decode(&buf[cursor..cursor + D::ENCODED_SIZE]).map_err(Some)?;
-    let cks = C::checksum(&buf[..cursor + read]).to_le_bytes();
-    cursor += D::ENCODED_SIZE;
+    let len = u32::from_le_bytes(buf[cursor..cursor + LEN_BUF_SIZE].try_into().unwrap());
+    cursor += LEN_BUF_SIZE;
+    let (read, data) = D::decode(&buf[cursor..cursor + len as usize]).map_err(Some)?;
+    debug_assert_eq!(
+      read, len as usize,
+      "invalid decoded size, expected {} got {}",
+      read, len
+    );
+
+    cursor += read;
+    let cks = C::checksum(&buf[..cursor]).to_le_bytes();
+    cursor += CHECKSUM_SIZE;
     if cks != buf[cursor..cursor + CHECKSUM_SIZE] {
       return Err(None);
     }
 
-    Ok(Self { flag, fid, data })
+    Ok(Self { flag, data })
   }
 }
+
+/// The default underlying file for [`ManifestFile`].
+#[cfg(feature = "std")]
+pub type DefaultUnderlyingFile = file::File;
+
+/// The default underlying file for [`ManifestFile`].
+#[cfg(not(feature = "std"))]
+pub type DefaultUnderlyingFile = Vec<u8>;
 
 /// Generic manifest file implementation.
 ///
@@ -595,27 +946,25 @@ impl<D> Entry<D> {
 /// +----------------------+--------------------------+-----------------------+
 /// | magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-/// | op (1 bit)           | custom flag (7 bits)     | fid (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
+/// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-/// | op (1 bit)           | custom flag (7 bits)     | fid (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
+/// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 /// | ...                  | ...                      | ...                   | ...                   | ...                   |
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 /// ```
 #[derive(Debug)]
-pub struct ManifestFile<F: File, M, C = Crc32> {
+pub struct ManifestFile<M, F = DefaultUnderlyingFile, C = Crc32> {
   opts: Options,
   file: F,
   manifest: M,
   _checksumer: core::marker::PhantomData<C>,
 }
 
-impl<F, M, C> Clone for ManifestFile<F, M, C>
+impl<M, F, C> Clone for ManifestFile<M, F, C>
 where
-  F::Options: Clone,
-  F: File + Clone,
+  F: Clone,
   M: Clone,
-  C: Clone,
 {
   fn clone(&self) -> Self {
     Self {
@@ -627,7 +976,7 @@ where
   }
 }
 
-impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
+impl<F: File, M: Manifest, C: Checksumer> ManifestFile<M, F, C> {
   /// Open and replay the manifest file.
   #[cfg(feature = "std")]
   #[inline]
@@ -686,13 +1035,19 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
       self.rewrite()?;
     }
 
-    let total_encoded_size = M::Data::ENCODED_SIZE * entries.len();
+    let total_encoded_size = entries
+      .iter()
+      .map(|ent| ent.data.encoded_size())
+      .sum::<usize>()
+      + entries.len() * FIXED_MANIFEST_ENTRY_SIZE;
 
     macro_rules! encode_batch {
       ($buf:ident) => {{
         let mut cursor = 0;
         for ent in entries {
-          cursor += ent.encode::<C>(&mut $buf[cursor..]).map_err(Error::data)?;
+          cursor += ent
+            .encode::<C>(ent.data.encoded_size(), &mut $buf[cursor..])
+            .map_err(Error::data)?;
         }
       }};
     }
@@ -755,6 +1110,7 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
     }
 
     let size = file.size().map_err(Error::io)?;
+
     let mut header = [0; MANIFEST_HEADER_SIZE];
     file.read_exact(&mut header).map_err(Error::io)?;
 
@@ -786,38 +1142,52 @@ impl<F: File, M: Manifest, C: Checksumer> ManifestFile<F, M, C> {
       });
     }
 
-    let encoded_entry_size = MANIFEST_ENTRY_HEADER_SIZE + M::Data::ENCODED_SIZE;
-
-    let num_entries = (size - MANIFEST_HEADER_SIZE as u64) / encoded_entry_size as u64;
-    let remaining = (size - MANIFEST_HEADER_SIZE as u64) % encoded_entry_size as u64;
-    if remaining != 0 {
-      // we have partial entry, truncate the file
-      file.truncate(size - remaining).map_err(Error::io)?;
-    }
-
     let mut manifest = M::default();
 
-    for _ in 0..num_entries {
-      let ent = if encoded_entry_size > MAX_INLINE_SIZE {
-        let mut buf = std::vec![0; encoded_entry_size];
-        file.read_exact(&mut buf).map_err(Error::io)?;
-        Entry::decode::<C>(&buf).map_err(|e| match e {
-          Some(e) => Error::data(e),
-          None => Error::ChecksumMismatch,
-        })?
-      } else {
-        let mut buf = [0; MAX_INLINE_SIZE];
-        file.read_exact(&mut buf).map_err(Error::io)?;
+    let mut curosr = 0;
+    loop {
+      let mut header_buf = [0; MANIFEST_ENTRY_HEADER_SIZE];
+      match file.read_exact(&mut header_buf) {
+        Ok(()) => {
+          curosr += MANIFEST_ENTRY_HEADER_SIZE;
 
-        Entry::decode::<C>(&buf[..MANIFEST_ENTRY_HEADER_SIZE + M::Data::ENCODED_SIZE]).map_err(
-          |e| match e {
-            Some(e) => Error::data(e),
-            None => Error::ChecksumMismatch,
-          },
-        )?
-      };
+          let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
+          let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
 
-      manifest.insert(ent).map_err(Error::manifest)?;
+          let remaining = size - MANIFEST_HEADER_SIZE as u64 - curosr as u64;
+          let needed = len + CHECKSUM_SIZE;
+          if needed as u64 > remaining {
+            return Err(Error::entry_corrupted(needed as u32, remaining as u32));
+          }
+
+          if entry_size > MAX_INLINE_SIZE {
+            let mut buf = std::vec![0; entry_size];
+            buf[..MANIFEST_ENTRY_HEADER_SIZE].copy_from_slice(&header_buf);
+            file
+              .read_exact(&mut buf[MANIFEST_ENTRY_HEADER_SIZE..])
+              .map_err(Error::io)?;
+            let ent = Entry::decode::<C>(&buf).map_err(|e| match e {
+              Some(e) => Error::data(e),
+              None => Error::ChecksumMismatch,
+            })?;
+            manifest.insert(ent).map_err(Error::manifest)?;
+          } else {
+            let mut buf = [0; MAX_INLINE_SIZE];
+            buf[..MANIFEST_ENTRY_HEADER_SIZE].copy_from_slice(&header_buf);
+            let buf = &mut buf
+              [MANIFEST_ENTRY_HEADER_SIZE..MANIFEST_ENTRY_HEADER_SIZE + len + CHECKSUM_SIZE];
+            file.read_exact(buf).map_err(Error::io)?;
+            let ent = Entry::decode::<C>(buf).map_err(|e| match e {
+              Some(e) => Error::data(e),
+              None => Error::ChecksumMismatch,
+            })?;
+            manifest.insert(ent).map_err(Error::manifest)?;
+          }
+          curosr += len + CHECKSUM_SIZE;
+        }
+        Err(e) if e.is_eof() => break,
+        Err(e) => return Err(Error::io(e)),
+      }
     }
 
     let mut this = Self {
@@ -879,20 +1249,23 @@ fn append<F: File, M: Manifest, C: Checksumer>(
   ent: &Entry<M::Data>,
   sync: bool,
 ) -> Result<(), Error<F, M>> {
-  if M::Data::ENCODED_SIZE + MANIFEST_ENTRY_HEADER_SIZE > MAX_INLINE_SIZE {
-    let mut buf = Vec::with_capacity(M::Data::ENCODED_SIZE + MANIFEST_ENTRY_HEADER_SIZE);
-    ent.encode::<C>(&mut buf).map_err(Error::data)?;
+  let encoded_len = ent.data.encoded_size();
+  if encoded_len + FIXED_MANIFEST_ENTRY_SIZE > MAX_INLINE_SIZE {
+    let mut buf = Vec::with_capacity(encoded_len + FIXED_MANIFEST_ENTRY_SIZE);
+    ent
+      .encode::<C>(encoded_len, &mut buf)
+      .map_err(Error::data)?;
     file
       .write_all(&buf)
       .and_then(|_| if sync { file.flush() } else { Ok(()) })
       .map_err(Error::io)
   } else {
     let mut buf = [0; MAX_INLINE_SIZE];
-    let encoded = ent
-      .encode::<C>(&mut buf[..MANIFEST_ENTRY_HEADER_SIZE + M::Data::ENCODED_SIZE])
-      .map_err(Error::data)?;
+    let buf = &mut buf[..encoded_len + FIXED_MANIFEST_ENTRY_SIZE];
+    ent.encode::<C>(encoded_len, buf).map_err(Error::data)?;
+
     file
-      .write_all(&buf[..encoded])
+      .write_all(buf)
       .and_then(|_| if sync { file.flush() } else { Ok(()) })
       .map_err(Error::io)
   }

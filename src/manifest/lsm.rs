@@ -1,13 +1,13 @@
-use crate::{CustomFlags, Data, Entry, EntryFlags};
-
 use super::*;
 
-use core::mem;
 #[cfg(feature = "std")]
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[cfg(not(feature = "std"))]
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
+
+const TABLE_ID_SIZE: usize = mem::size_of::<u64>();
+const LEVEL_SIZE: usize = mem::size_of::<u8>();
 
 /// Error for [`Manifest`].
 #[derive(Debug)]
@@ -30,14 +30,16 @@ impl core::fmt::Display for Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
-/// Manifest represents the contents of the MANIFEST file in a Badger store.
+/// Manifest represents the contents of the MANIFEST file in a store.
 ///
 /// The MANIFEST file describes the startup state of the db -- all LSM files and what level they're
 /// at.
 ///
-/// It consists of a sequence of ManifestChangeSet objects.  Each of these is treated atomically,
+/// It consists of a sequence of [`ManifestChange`] objects. Each of these is treated atomically,
 /// and contains a sequence of ManifestChange's (file creations/deletions) which we use to
 /// reconstruct the manifest at startup.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Manifest<D> {
   levels: Vec<LevelManifest>,
   tables: HashMap<u64, TableManifest<D>>,
@@ -123,13 +125,12 @@ impl<D: Data> crate::Manifest for Manifest<D> {
 
   fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>> {
     self.tables.into_iter().map(|(id, table)| Entry {
-      fid: id as u32,
       data: ManifestChange {
         id,
         level: table.level,
         data: table.data,
       },
-      flag: EntryFlags::creation(CustomFlags::empty()),
+      flag: EntryFlags::creation(),
     })
   }
 
@@ -142,31 +143,50 @@ impl<D: Data> crate::Manifest for Manifest<D> {
   }
 }
 
-// type ManifestChange struct {
-// 	Id             uint64                   `protobuf:"varint,1,opt,name=Id,proto3" json:"Id,omitempty"`
-// 	Op             ManifestChange_Operation `protobuf:"varint,2,opt,name=Op,proto3,enum=badgerpb4.ManifestChange_Operation" json:"Op,omitempty"`
-// 	Level          uint32                   `protobuf:"varint,3,opt,name=Level,proto3" json:"Level,omitempty"`
-// 	KeyId          uint64                   `protobuf:"varint,4,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
-// 	EncryptionAlgo EncryptionAlgo           `protobuf:"varint,5,opt,name=encryption_algo,json=encryptionAlgo,proto3,enum=badgerpb4.EncryptionAlgo" json:"encryption_algo,omitempty"`
-// 	Compression    uint32                   `protobuf:"varint,6,opt,name=compression,proto3" json:"compression,omitempty"`
-// }
-
-const TABLE_ID_SIZE: usize = mem::size_of::<u64>();
-const LEVEL_SIZE: usize = mem::size_of::<u8>();
-
+/// Represents a change in the manifest.
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ManifestChange<D> {
   id: u64,
   level: u8,
   data: D,
 }
 
-impl<D: Data> Data for ManifestChange<D> {
-  const ENCODED_SIZE: usize = TABLE_ID_SIZE + LEVEL_SIZE + D::ENCODED_SIZE;
+impl<D> ManifestChange<D> {
+  /// Creates a new manifest change.
+  #[inline]
+  pub const fn new(id: u64, level: u8, data: D) -> Self {
+    Self { id, level, data }
+  }
 
+  /// Returns the id of the table.
+  #[inline]
+  pub const fn id(&self) -> u64 {
+    self.id
+  }
+
+  /// Returns the level of the table.
+  #[inline]
+  pub const fn level(&self) -> u8 {
+    self.level
+  }
+
+  /// Returns the data of the table.
+  #[inline]
+  pub const fn data(&self) -> &D {
+    &self.data
+  }
+}
+
+impl<D: Data> Data for ManifestChange<D> {
   type Error = D::Error;
 
+  fn encoded_size(&self) -> usize {
+    TABLE_ID_SIZE + LEVEL_SIZE + self.data.encoded_size()
+  }
+
   fn encode(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-    assert!(buf.len() >= Self::ENCODED_SIZE);
+    assert!(buf.len() >= self.encoded_size());
 
     let mut offset = 0;
     buf[offset..offset + TABLE_ID_SIZE].copy_from_slice(&self.id.to_le_bytes());
@@ -180,8 +200,6 @@ impl<D: Data> Data for ManifestChange<D> {
   }
 
   fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error> {
-    assert!(buf.len() >= Self::ENCODED_SIZE);
-
     let mut offset = 0;
     let id = u64::from_le_bytes(buf[offset..offset + TABLE_ID_SIZE].try_into().unwrap());
     offset += TABLE_ID_SIZE;
@@ -194,15 +212,42 @@ impl<D: Data> Data for ManifestChange<D> {
 
 /// Contains information about LSM tree levels
 /// in the MANIFEST file.
+#[derive(Default, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct LevelManifest {
   /// Set of table id's
   tables: HashSet<u64>,
 }
 
+impl LevelManifest {
+  /// Returns the tables in the level.
+  #[inline]
+  pub fn tables(&self) -> &HashSet<u64> {
+    &self.tables
+  }
+}
+
 /// Contains information about a specific table
 /// in the LSM tree.
+#[derive(Default, Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TableManifest<D> {
   /// Level of the table
   level: u8,
   data: D,
+}
+
+impl<D> TableManifest<D> {
+  /// Returns the level of the table.
+  #[inline]
+  pub const fn level(&self) -> u8 {
+    self.level
+  }
+
+  /// Returns the data of the table.
+  #[inline]
+  pub const fn data(&self) -> &D {
+    &self.data
+  }
 }
