@@ -147,19 +147,17 @@ impl<D> Entry<D> {
     let mut cursor = 1;
     let len = u32::from_le_bytes(buf[cursor..cursor + LEN_BUF_SIZE].try_into().unwrap());
     cursor += LEN_BUF_SIZE;
+    let buf_len = buf.len();
+    let cks = C::checksum(&buf[..buf_len - CHECKSUM_SIZE]).to_le_bytes();
+    if cks != buf[buf_len - CHECKSUM_SIZE..buf_len] {
+      return Err(None);
+    }
     let (read, data) = D::decode(&buf[cursor..cursor + len as usize]).map_err(Some)?;
     debug_assert_eq!(
       read, len as usize,
       "invalid decoded size, expected {} got {}",
       read, len
     );
-
-    cursor += read;
-    let cks = C::checksum(&buf[..cursor]).to_le_bytes();
-    cursor += CHECKSUM_SIZE;
-    if cks != buf[cursor..cursor + CHECKSUM_SIZE] {
-      return Err(None);
-    }
 
     Ok(Self { flag, data })
   }
@@ -202,44 +200,4 @@ impl Data for () {
   fn decode(_buf: &[u8]) -> Result<(usize, Self), Self::Error> {
     Ok((0, ()))
   }
-}
-
-/// The append-only trait.
-pub trait Manifest: Sized {
-  /// The data type.
-  type Data: Data;
-
-  /// The options type used to create a new manifest.
-  type Options: Clone;
-
-  /// The error type.
-  #[cfg(feature = "std")]
-  type Error: std::error::Error;
-
-  /// The error type.
-  #[cfg(not(feature = "std"))]
-  type Error: core::fmt::Debug + core::fmt::Display;
-
-  /// Open a new manifest.
-  fn open(opts: Self::Options) -> Result<Self, Self::Error>;
-
-  /// Returns the options.
-  fn options(&self) -> &Self::Options;
-
-  /// Returns `true` if the manifest should trigger rewrite.
-  ///
-  /// `size` is the current size of the append-only log.
-  fn should_rewrite(&self, size: u64) -> bool;
-
-  /// Insert a new entry.
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
-
-  /// Iterate over the entries.
-  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>>;
-
-  /// Returns the number of deletions.
-  fn deletions(&self) -> u64;
-
-  /// Returns the number of creations.
-  fn creations(&self) -> u64;
 }

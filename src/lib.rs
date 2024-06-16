@@ -1,13 +1,13 @@
 // #![doc = include_str!("../README.md")]
 //! a
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
+#![cfg_attr(not(feature = "arena"), forbid(unsafe_code))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs, warnings)]
-#![forbid(unsafe_code)]
 
 #[cfg(not(any(feature = "std", feature = "alloc")))]
-compile_error!("`aol` cannot be compiled when both `std` and `alloc` are not enabled.");
+compile_error!("`aol` cannot be compiled when both `std` and `alloc` are disabled.");
 
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
@@ -19,9 +19,6 @@ extern crate std;
 use std::vec::Vec;
 
 use core::mem;
-
-/// Errors.
-pub mod error;
 
 /// Some [`Manifest`](crate::manifest::Manifest) implementations.
 pub mod manifest;
@@ -447,117 +444,3 @@ impl Checksumer for Crc32 {
     crc32fast::hash(buf)
   }
 }
-
-/// Options for the manifest file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Options {
-  magic_version: u16,
-  sync_on_write: bool,
-}
-
-impl Default for Options {
-  /// Returns the default options.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::Options;
-  ///
-  /// let opts = Options::default();
-  /// ```
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl Options {
-  /// Create a new Options with the given file options
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::Options;
-  ///
-  /// let opts = Options::new();
-  /// ```
-  #[inline]
-  pub const fn new() -> Self {
-    Self {
-      magic_version: 0,
-      sync_on_write: true,
-    }
-  }
-
-  /// Get the external magic.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::Options;
-  ///
-  /// let opts = Options::new();
-  ///
-  /// assert_eq!(opts.magic_version(), 0);
-  /// ```
-  #[inline]
-  pub const fn magic_version(&self) -> u16 {
-    self.magic_version
-  } 
-
-  /// Get whether flush the data to disk after write.
-  ///
-  /// Default is `true`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::Options;
-  ///
-  /// let opts = Options::new();
-  ///
-  /// assert_eq!(opts.sync_on_write(), true);
-  /// ```
-  #[inline]
-  pub const fn sync_on_write(&self) -> bool {
-    self.sync_on_write
-  }
-
-  /// Set the external magic.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::Options;
-  ///
-  /// let opts = Options::new().with_magic_version(1);
-  ///
-  /// assert_eq!(opts.magic_version(), 1);
-  /// ```
-  #[inline]
-  pub const fn with_magic_version(mut self, magic_version: u16) -> Self {
-    self.magic_version = magic_version;
-    self
-  }
-
-  /// Set whether flush the data to disk after write.
-  ///
-  ///  Default is `true`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::Options;
-  ///
-  /// let opts = Options::new().with_sync_on_write(false);
-  ///
-  /// assert_eq!(opts.sync_on_write(), false);
-  /// ```
-  #[inline]
-  pub const fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
-    self.sync_on_write = sync_on_write;
-    self
-  }
-}
-
