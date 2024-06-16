@@ -1,9 +1,15 @@
-/// [`BackedManifest`](crate::manifest::BackedManifest) implementors for Wisckey WALs.
-#[cfg(any(feature = "std", feature = "hashbrown"))]
-#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
-pub mod wiscask;
+// /// [`Manifest`](crate::append-only::Manifest) implementors for Wisckey WALs.
+// #[cfg(any(feature = "std", feature = "hashbrown"))]
+// #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
+// pub mod wiscask;
+// /// [`Manifest`](crate::append-only::Manifest) implementors for Wisckey WALs based on LSM model.
+// #[cfg(any(feature = "std", feature = "hashbrown"))]
+// #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
+// pub mod lsm;
 
-/// The entry in the manifest file.
+use super::*;
+
+/// The entry in the append-only file.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Entry<D> {
@@ -17,7 +23,7 @@ impl<D> Entry<D> {
   /// # Example
   ///
   /// ```rust
-  /// use manifile::Entry;
+  /// use aol::Entry;
   ///
   /// let entry = Entry::<()>::creation(());
   /// ```
@@ -34,7 +40,7 @@ impl<D> Entry<D> {
   /// # Example
   ///
   /// ```rust
-  /// use manifile::Entry;
+  /// use aol::Entry;
   ///
   /// let entry = Entry::<()>::deletion(());
   /// ```
@@ -51,7 +57,7 @@ impl<D> Entry<D> {
   /// # Example
   ///
   /// ```rust
-  /// use manifile::{Entry, CustomFlags};
+  /// use aol::{Entry, CustomFlags};
   ///
   /// let entry = Entry::creation_with_custom_flags(CustomFlags::empty(), ());
   /// ```
@@ -68,7 +74,7 @@ impl<D> Entry<D> {
   /// # Example
   ///
   /// ```rust
-  /// use manifile::{Entry, CustomFlags};
+  /// use aol::{Entry, CustomFlags};
   ///
   /// let entry = Entry::deletion_with_custom_flags(CustomFlags::empty(), ());
   /// ```
@@ -85,7 +91,7 @@ impl<D> Entry<D> {
   /// # Example
   ///
   /// ```rust
-  /// use manifile::{Entry, EntryFlags, CustomFlags};
+  /// use aol::{Entry, EntryFlags, CustomFlags};
   ///
   /// let entry = Entry::new(EntryFlags::creation(CustomFlags::empty()), ());
   ///
@@ -159,13 +165,6 @@ impl<D> Entry<D> {
   }
 }
 
-/// [`BackedManifest`](crate::manifest::BackedManifest) implementors for Wisckey WALs based on LSM model.
-#[cfg(any(feature = "std", feature = "hashbrown"))]
-#[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
-pub mod lsm;
-
-use super::*;
-
 /// Data for the [`Entry`].
 pub trait Data: Sized {
   /// The error type returned by encoding.
@@ -205,10 +204,13 @@ impl Data for () {
   }
 }
 
-/// The manifest trait.
-pub trait BackedManifest: Default {
+/// The append-only trait.
+pub trait Manifest: Sized {
   /// The data type.
   type Data: Data;
+
+  /// The options type used to create a new manifest.
+  type Options: Clone;
 
   /// The error type.
   #[cfg(feature = "std")]
@@ -217,6 +219,17 @@ pub trait BackedManifest: Default {
   /// The error type.
   #[cfg(not(feature = "std"))]
   type Error: core::fmt::Debug + core::fmt::Display;
+
+  /// Open a new manifest.
+  fn open(opts: Self::Options) -> Result<Self, Self::Error>;
+
+  /// Returns the options.
+  fn options(&self) -> &Self::Options;
+
+  /// Returns `true` if the manifest should trigger rewrite.
+  ///
+  /// `size` is the current size of the append-only log.
+  fn should_rewrite(&self, size: u64) -> bool;
 
   /// Insert a new entry.
   fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;

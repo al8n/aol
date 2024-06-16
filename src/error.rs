@@ -1,25 +1,25 @@
 use super::*;
 
-/// Errors for manifest file.
+/// Errors for append-only file.
 #[derive(Debug)]
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub enum Error<F: BackedFile, M: BackedManifest> {
+pub enum Error<F, M: Manifest> {
   /// Manifest has bad magic.
-  #[cfg_attr(feature = "std", error("manifest has bad magic text"))]
+  #[cfg_attr(feature = "std", error("append-only has bad magic text"))]
   BadMagicText,
-  /// Cannot open manifest because the external magic doesn't match.
-  #[cfg_attr(feature = "std", error("cannot open manifest because the external magic doesn't match. expected {expected}, found {found}"))]
+  /// Cannot open append-only because the external magic doesn't match.
+  #[cfg_attr(feature = "std", error("cannot open append-only because the external magic doesn't match. expected {expected}, found {found}"))]
   BadExternalMagic {
     /// Expected external magic.
     expected: u16,
     /// Found external magic.
     found: u16,
   },
-  /// Cannot open manifest because the magic doesn't match.
+  /// Cannot open append-only because the magic doesn't match.
   #[cfg_attr(
     feature = "std",
     error(
-      "cannot open manifest because the magic doesn't match. expected {expected}, found {found}"
+      "cannot open append-only because the magic doesn't match. expected {expected}, found {found}"
     )
   )]
   BadMagic {
@@ -29,12 +29,12 @@ pub enum Error<F: BackedFile, M: BackedManifest> {
     found: u16,
   },
 
-  /// Corrupted manifest file: entry checksum mismatch.
+  /// Corrupted append-only file: entry checksum mismatch.
   #[cfg_attr(feature = "std", error("entry checksum mismatch"))]
   ChecksumMismatch,
 
-  /// Corrupted manifest file: not enough bytes to decode manifest entry.
-  #[cfg_attr(feature = "std", error("entry data len {len} is greater than the remaining file size {remaining}, manifest file might be corrupted"))]
+  /// Corrupted append-only file: not enough bytes to decode append-only entry.
+  #[cfg_attr(feature = "std", error("entry data len {len} is greater than the remaining file size {remaining}, append-only file might be corrupted"))]
   EntryTooLarge {
     /// Entry data len.
     len: u32,
@@ -52,29 +52,29 @@ pub enum Error<F: BackedFile, M: BackedManifest> {
 
   /// I/O error.
   #[cfg_attr(feature = "std", error(transparent))]
-  IO(F::Error),
+  IO(F),
 }
 
 #[cfg(not(feature = "std"))]
-impl<F: BackedFile, M: BackedManifest> core::fmt::Display for Error<F, M> {
+impl<F: BackedFile, M: Manifest> core::fmt::Display for Error<F, M> {
   #[inline]
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
       Self::BadExternalMagic { expected, found } => write!(
         f,
-        "cannot open manifest because the external magic doesn't match. expected {}, found {}",
+        "cannot open append-only because the external magic doesn't match. expected {}, found {}",
         expected, found
       ),
       Self::BadMagic { expected, found } => write!(
         f,
-        "cannot open manifest because the magic doesn't match. expected {}, found {}",
+        "cannot open append-only because the magic doesn't match. expected {}, found {}",
         expected, found
       ),
-      Self::BadMagicText => write!(f, "manifest has bad magic text"),
+      Self::BadMagicText => write!(f, "append-only has bad magic text"),
       Self::ChecksumMismatch => write!(f, "entry checksum mismatch"),
       Self::EntryTooLarge { len, remaining } => write!(
         f,
-        "entry data len {} is greater than the remaining file size {}, manifest file might be corrupted",
+        "entry data len {} is greater than the remaining file size {}, append-only file might be corrupted",
         len, remaining
       ),
       Self::Data(err) => err.fmt(f),
@@ -84,10 +84,10 @@ impl<F: BackedFile, M: BackedManifest> core::fmt::Display for Error<F, M> {
   }
 }
 
-impl<F: BackedFile, M: BackedManifest> Error<F, M> {
+impl<F: core::fmt::Debug + core::fmt::Display, M: Manifest> Error<F, M> {
   /// Create a new `Error` from an I/O error.
   #[inline]
-  pub const fn io(err: F::Error) -> Self {
+  pub const fn io(err: F) -> Self {
     Self::IO(err)
   }
 
@@ -97,7 +97,7 @@ impl<F: BackedFile, M: BackedManifest> Error<F, M> {
     Self::Data(err)
   }
 
-  /// Create a new `Error` from an unknown manifest event.
+  /// Create a new `Error` from an unknown append-only event.
   #[inline]
   pub const fn manifest(err: M::Error) -> Self {
     Self::Manifest(err)

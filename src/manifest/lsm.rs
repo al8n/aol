@@ -37,7 +37,7 @@ impl std::error::Error for Error {}
 ///
 /// It consists of a sequence of [`ManifestChange`] objects. Each of these is treated atomically,
 /// and contains a sequence of ManifestChange's (file creations/deletions) which we use to
-/// reconstruct the manifest at startup.
+/// reconstruct the append-only at startup.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Manifest<D> {
@@ -56,7 +56,7 @@ impl<D> Default for Manifest<D> {
 }
 
 impl<D> Manifest<D> {
-  /// Returns a new manifest.
+  /// Returns a new append-only.
   #[inline]
   pub fn new() -> Self {
     Self {
@@ -67,20 +67,20 @@ impl<D> Manifest<D> {
     }
   }
 
-  /// Returns the levels in the manifest.
+  /// Returns the levels in the append-only.
   #[inline]
   pub fn levels(&self) -> &[LevelManifest] {
     &self.levels
   }
 
-  /// Returns the tables in the manifest.
+  /// Returns the tables in the append-only.
   #[inline]
   pub fn tables(&self) -> &HashMap<u64, TableManifest<D>> {
     &self.tables
   }
 }
 
-impl<D: Data> crate::BackedManifest for Manifest<D> {
+impl<D: Data> crate::Manifest for Manifest<D> {
   type Data = ManifestChange<D>;
 
   type Error = Error;
@@ -143,7 +143,7 @@ impl<D: Data> crate::BackedManifest for Manifest<D> {
   }
 }
 
-/// Represents a change in the manifest.
+/// Represents a change in the append-only.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ManifestChange<D> {
@@ -153,7 +153,7 @@ pub struct ManifestChange<D> {
 }
 
 impl<D> ManifestChange<D> {
-  /// Creates a new manifest change.
+  /// Creates a new append-only change.
   #[inline]
   pub const fn new(id: u64, level: u8, data: D) -> Self {
     Self { id, level, data }

@@ -58,7 +58,7 @@ impl crate::Data for Fid {
 ///
 /// It consists of a sequence of [`Fid`]. Each of these is treated atomically,
 /// and contains a sequence of [`Fid`]'s (file creations/deletions) which we use to
-/// reconstruct the manifest at startup.
+/// reconstruct the append-only at startup.
 ///
 /// The first bit of the [`CustomFlags`] is used to differentiate between log and value log files.
 /// If the bit is set, then it's a value log file, otherwise it's a log file.
@@ -68,14 +68,14 @@ pub struct Manifest {
   vlogs: HashSet<Fid>,
   logs: HashSet<Fid>,
 
-  // Contains total number of creation and deletion changes in the manifest -- used to compute
-  // whether it'd be useful to rewrite the manifest.
+  // Contains total number of creation and deletion changes in the append-only -- used to compute
+  // whether it'd be useful to rewrite the append-only.
   creations: u64,
   deletions: u64,
 }
 
 impl Manifest {
-  /// Create a new manifest.
+  /// Create a new append-only.
   #[inline]
   pub fn new() -> Self {
     Self {
@@ -87,7 +87,7 @@ impl Manifest {
   }
 }
 
-impl crate::BackedManifest for Manifest {
+impl crate::Manifest for Manifest {
   type Data = Fid;
 
   type Error = core::convert::Infallible;
