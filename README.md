@@ -1,5 +1,5 @@
 <div align="center">
-<h1>AOL</h1>
+<h1>Append Only Log</h1>
 </div>
 
 <div align="center">
@@ -21,25 +21,62 @@ English | [简体中文][zh-cn-url]
 
 </div>
 
+## Introducation
+
+When developing infrastructure softwares, write-ahead log or append-only log plays an important role, and people re-implement same 
+funcationalities multiple times, but actually, the core for append-only log is just `write`, `replay`, and `rewrite`.
+
+This crate provides generic purpose append-only log implementation, there are three kinds of implementations based on `std::fs::File`,
+memory map, lockfree ARENA (SkipMap).
+
+- `aol::fs::AppendLog`:
+
+  Generic append-only log implementation based on `std::fs::File`.
+
+  - It is good for:
+    - The encoded entry size is smaller than `64` bytes.
+    - Manifest file.
+    - Write is not too frequently.
+
+  - Pros:
+    - It is growable, do not require pre-allocated.
+    - Support automatically rewrite.
+    - No holes in the file.
+
+- `aol::memmap::AppendLog`:
+
+  Generic append-only log implementation based on [`memmap`](https://docs.rs/memmap2).
+
+  - It is good for:
+    - Any append-only log, if you do not care about pre-allocating the file and you know you data will
+      never larger than the pre-allocating size.
+
+  - Pros:
+    - Support automatic rewrite.
+    - No holes in the file.
+    - As this implementation is backed by an ARENA, no allocation required for both read and write.
+    - Fast read and write performance, backed by memory map, no extra I/O required.
+
+- `aol::memmap::sync::AppendLog`:
+  
+  Generic append-only log implementation based on lockfree ARENA based [`skl::SkipMap`](https://docs.rs/skl/latest/skl/map/struct.SkipMap.html) (support both in-memory and on-disk).  
+  
+  - It is good for:
+    - Append-only log which size cannot reach `4GB`.
+    - End-users who can manage the grow and rewrite by themselves.
+
+  - Pros:
+    - As this implementation is backed by an ARENA, no allocation required for both read and write.
+    - Fast read and write performance, backed by memory map, no extra I/O required.
+    - Lock-free and concurrent-safe.
+    - Support both in-memory and on-disk.
+    - Can be used in `no_std` environment.
+
 ## Installation
 
 ```toml
 [dependencies]
 aol = "0.0.0"
-```
-
-## File Structure
-
-```text
-+----------------------+--------------------------+-----------------------+
-| magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
-+----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-| op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (N bytes)        | checksum (4 bytes)    |
-+----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-| op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (N bytes)        | checksum (4 bytes)    |
-+----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-| ...                  | ...                      | ...                   | ...                   | ...                   |
-+----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 ```
 
 #### License

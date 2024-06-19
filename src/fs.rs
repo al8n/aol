@@ -97,7 +97,7 @@ pub trait Snapshot: Sized {
   type Data: Data;
 
   /// The options type used to create a new snapshot.
-  type Options: Clone;
+  type Options;
 
   /// The error type.
   #[cfg(feature = "std")]
@@ -110,9 +110,6 @@ pub trait Snapshot: Sized {
   /// Create a new snapshot.
   fn new(opts: Self::Options) -> Result<Self, Self::Error>;
 
-  /// Returns the options.
-  fn options(&self) -> &Self::Options;
-
   /// Returns `true` if the snapshot should trigger rewrite.
   ///
   /// `size` is the current size of the append-only log.
@@ -123,6 +120,9 @@ pub trait Snapshot: Sized {
 
   /// Insert a batch of entries.
   fn insert_batch(&mut self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error>;
+
+  /// Clear the snapshot.
+  fn clear(&mut self) -> Result<(), Self::Error>;
 }
 
 /// Options for the append only log.
@@ -240,37 +240,47 @@ impl Options {
 
 /// Generic append-only log implementation based on [`std::fs::File`].
 ///
-/// Compared to [`arena::AppendLog`](crate::arena::AppendLog):
+/// - It is good for:
+///   - The encoded entry size is smaller than `64`.
+///   - Manifest file.
+///   - Write is not too frequently.
+/// 
+/// - Compared to [`memmap::sync::AppendLog`](crate::memmap::sync::AppendLog):
 ///
-/// - Pros:
-///   - It is growable, do not require pre-allocated.
-///   - Support automatic rewrite.
-///   - No holes in the file.
+///   - Pros:
+///     - It is growable, do not require pre-allocated.
+///     - Support automatic rewrite.
+///     - No holes in the file.
 ///
-/// - Cons:
-///   - Read and write may require extra allocations for encoding and decoding.
-///   - Each write requires an I/O system call.
-///   - To use it in concurrent environment, `Mutex` or `RwLock` is required.
-///   - Do not support in-memory mode.
-///   - Cannot be used in `no_std` environment.
+///   - Cons:
+///     - Read and write may require extra allocations (if the entry encoded size is larger than `64`) for encoding and decoding.
+///     - Each write requires an I/O system call.
+///     - To use it in concurrent environment, `Mutex` or `RwLock` is required.
+///     - Do not support in-memory mode.
+///     - Cannot be used in `no_std` environment.
 ///
-/// It is good for:
-/// - Append-only log which size cannot reach `4GB`.
-/// - End-users who can manage the grow and rewrite by themselves.
-///
-/// File structure:
-///
-/// ```text
-/// +----------------------+--------------------------+-----------------------+
-/// | magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
-/// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-/// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
-/// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-/// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
-/// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-/// | ...                  | ...                      | ...                   | ...                   | ...                   |
-/// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-/// ```
+/// - Compared to [`memmap::AppendLog`](crate::memmap::AppendLog):
+///   
+///   - Pros:
+///     - It is growable, do not require pre-allocated.
+/// 
+///   - Cons:
+///     - Read and write may require extra allocations (if the entry encoded size is larger than `64`) for encoding and decoding.
+///     - Each write requires an I/O system call.
+/// 
+// File structure:
+//
+// ```text
+// +----------------------+--------------------------+-----------------------+
+// | magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
+// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
+// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
+// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+// | ...                  | ...                      | ...                   | ...                   | ...                   |
+// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+// ```
 #[derive(Debug)]
 pub struct AppendLog<S, C = Crc32> {
   opts: Options,
@@ -294,21 +304,90 @@ impl<S, C> AppendLog<S, C> {
   pub const fn snapshot(&self) -> &S {
     &self.snapshot
   }
-}
 
-impl<S: Snapshot, C> AppendLog<S, C> {
-  /// Flush the append only log.
+  /// Returns the path to the append-only file.
   #[inline]
-  pub fn flush(&mut self) -> Result<(), Error<S>> {
-    // unwrap is ok, because this log cannot be used in concurrent environment
-    self.file.as_mut().unwrap().flush().map_err(Error::io)
+  pub fn path(&self) -> &std::path::Path {
+    &self.filename
   }
 
-  /// Sync the append only log.
+  /// Sync the underlying file to disk.
+  ///
+  /// See [`std::fs::File::sync_all`] for more information.
   #[inline]
-  pub fn sync_all(&self) -> Result<(), Error<S>> {
-    // unwrap is ok, because this log cannot be used in concurrent environment
-    self.file.as_ref().unwrap().sync_all().map_err(Error::io)
+  pub fn sync_all(&self) -> std::io::Result<()> {
+    if let Some(file) = self.file.as_ref() {
+      file.sync_all()
+    } else {
+      Ok(())
+    }
+  }
+
+  /// Sync the underlying file's data to disk.
+  ///
+  /// See [`std::fs::File::sync_data`] for more information.
+  #[inline]
+  pub fn sync_data(&self) -> std::io::Result<()> {
+    if let Some(file) = self.file.as_ref() {
+      file.sync_data()
+    } else {
+      Ok(())
+    }
+  }
+
+  /// Lock the append-only log in exlusive mode.
+  ///
+  /// See [`fs4::FileExt::lock_exclusive`] for more information.
+  #[cfg(feature = "filelock")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
+  pub fn lock_exclusive(&mut self) -> std::io::Result<()> {
+    use fs4::FileExt;
+
+    self.file.as_ref().unwrap().lock_exclusive()
+  }
+
+  /// Lock the append-only log in shared mode.
+  ///
+  /// See [`fs4::FileExt::lock_shared`] for more information.
+  #[cfg(feature = "filelock")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
+  pub fn lock_shared(&mut self) -> std::io::Result<()> {
+    use fs4::FileExt;
+
+    self.file.as_ref().unwrap().lock_shared()
+  }
+
+  /// Try to lock the append-only log in exlusive mode.
+  ///
+  /// See [`fs4::FileExt::try_lock_exclusive`] for more information.
+  #[cfg(feature = "filelock")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
+  pub fn try_lock_exclusive(&mut self) -> std::io::Result<()> {
+    use fs4::FileExt;
+
+    self.file.as_ref().unwrap().try_lock_exclusive()
+  }
+
+  /// Try to lock the append-only log in shared mode.
+  ///
+  /// See [`fs4::FileExt::try_lock_shared`] for more information.
+  #[cfg(feature = "filelock")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
+  pub fn try_lock_shared(&mut self) -> std::io::Result<()> {
+    use fs4::FileExt;
+
+    self.file.as_ref().unwrap().try_lock_shared()
+  }
+
+  /// Unlock the append-only log.
+  ///
+  /// See [`fs4::FileExt::unlock`] for more information.
+  #[cfg(feature = "filelock")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
+  pub fn unlock(&mut self) -> std::io::Result<()> {
+    use fs4::FileExt;
+
+    self.file.as_ref().unwrap().unlock()
   }
 }
 
@@ -335,12 +414,6 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       opts,
       snapshot_opts,
     )
-  }
-
-  /// Returns the path to the append-only file.
-  #[inline]
-  pub fn path(&self) -> &std::path::Path {
-    &self.filename
   }
 
   /// Append an entry to the append-only file.
@@ -425,7 +498,6 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     if !existing || size == 0 {
       Self::write_header(&mut file, magic_version)?;
 
-      let len = file.metadata().map_err(Error::io)?.len();
       return Ok(Self {
         filename,
         rewrite_filename,
@@ -433,7 +505,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
         _checksumer: core::marker::PhantomData,
         opts,
-        len,
+        len: size,
       });
     }
 
@@ -559,13 +631,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   fn rewrite(&mut self) -> Result<(), Error<S>> {
-    thread_local! {
-      static REWRITE_FILE_NAME: core::cell::RefCell<Option<std::path::PathBuf>> = core::cell::RefCell::new(None);
-    }
-
-    let snapshot_opts = self.snapshot.options().clone();
-    let snapshot = S::new(snapshot_opts).map_err(Error::snapshot)?;
-    let _ = mem::replace(&mut self.snapshot, snapshot);
+    self.snapshot.clear().map_err(Error::snapshot)?;
 
     let old_file = self.file.take().unwrap();
 

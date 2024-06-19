@@ -3,6 +3,9 @@ pub use skl::{map::Error as MapError, options::Freelist, ArenaError};
 
 use super::*;
 
+const CURRENT_VERSION: u16 = 0;
+const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
+
 /// The snapshot trait, snapshot may contain some in-memory information about the append-only log.
 pub trait Snapshot: Sized {
   /// The data type.
@@ -112,25 +115,180 @@ impl<S: Snapshot> Error<S> {
   }
 }
 
-/// Generic append-only log implementation based on [`Arena`] (support both in-memory and on-disk).
+/// Options for the append only log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Options {
+  magic_version: u16,
+  sync_on_write: bool,
+  capacity: u32,
+}
+
+impl Default for Options {
+  #[inline]
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl Options {
+  /// Create a new Options with the given capacity.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new(10_000);
+  /// ```
+  #[inline]
+  pub const fn new() -> Self {
+    Self {
+      magic_version: 0,
+      sync_on_write: true,
+      capacity: 0,
+    }
+  }
+
+  /// Get the external magic.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.magic_version(), 0);
+  /// ```
+  #[inline]
+  pub const fn magic_version(&self) -> u16 {
+    self.magic_version
+  }
+
+  /// Get whether flush the data to disk after write.
+  ///
+  /// Default is `true`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.sync_on_write(), true);
+  /// ```
+  #[inline]
+  pub const fn sync_on_write(&self) -> bool {
+    self.sync_on_write
+  }
+
+  /// Get the capacity of the append-only log.
+  ///
+  /// This configuration is used to pre-allocate the append-only log.
+  /// When using [`AppendLog::map`], this configuration will be ignored.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new().with_capacity(10_000);
+  ///
+  /// assert_eq!(opts.capacity(), 0);
+  /// ```
+  #[inline]
+  pub const fn capacity(&self) -> u32 {
+    self.capacity
+  }
+
+  /// Set the external magic.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new().with_magic_version(1);
+  ///
+  /// assert_eq!(opts.magic_version(), 1);
+  /// ```
+  #[inline]
+  pub const fn with_magic_version(mut self, magic_version: u16) -> Self {
+    self.magic_version = magic_version;
+    self
+  }
+
+  /// Set whether flush the data to disk after write.
+  ///
+  /// Default is `true`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new().with_sync_on_write(false);
+  ///
+  /// assert_eq!(opts.sync_on_write(), false);
+  /// ```
+  #[inline]
+  pub const fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
+    self.sync_on_write = sync_on_write;
+    self
+  }
+
+  /// Set the capacity of the append-only log.
+  ///
+  /// This configuration is used to pre-allocate the append-only log.
+  /// When using [`AppendLog::map`], this configuration will be ignored.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::memmap::sync::Options;
+  ///
+  /// let opts = Options::new().with_capacity(10_000);
+  /// ```
+  #[inline]
+  pub const fn with_capacity(mut self, capacity: u32) -> Self {
+    self.capacity = capacity;
+    self
+  }
+}
+
+
+/// Generic append-only log implementation based on lockfree ARENA based [`SkipMap`] (support both in-memory and on-disk).
 ///
-/// Compared to [`fs::AppendLog`](crate::fs::AppendLog):
+/// - It is good for:
+///   - Append-only log which size cannot reach `4GB`.
+///   - End-users who can manage the grow and rewrite by themselves.
+/// 
+/// - Compared to [`fs::AppendLog`](crate::fs::AppendLog):
 ///
-/// - Pros:
-///   - As this implementation is backed by an ARENA, no allocation required for both read and write.
-///   - Fast read and write performance, backed by memory map, no extra I/O required.
-///   - Lock-free and concurrent-safe.
-///   - Support both in-memory and on-disk.
-///   - Can be used in `no_std` environment.
+///   - Pros:
+///     - As this implementation is backed by an ARENA, no allocation required for both read and write.
+///     - Fast read and write performance, backed by memory map, no extra I/O required.
+///     - Lock-free and concurrent-safe.
+///     - Support both in-memory and on-disk.
+///     - Can be used in `no_std` environment.
 ///
-/// - Cons:
-///   - Pre-allocated is required, automatic grow and rewrite are not supported.
-///   - Maximum size is less than `u32::MAX`.
-///   - May contains memory holes
+///   - Cons:
+///     - Pre-allocated is required, automatic grow and rewrite are not supported.
+///     - Maximum size is less than `u32::MAX`.
+///     - May contains memory holes
 ///
-/// It is good for:
-/// - Append-only log which size cannot reach `4GB`.
-/// - End-users who can manage the grow and rewrite by themselves.
+/// - Compared to [`memmap::AppendLog`](crate::memmap::AppendLog):
+/// 
+///   - Pros:
+///     - Lock-free and concurrent-safe.
+///     - Support both in-memory and on-disk.
+///     - Can be used in `no_std` environment.
+///   
+///   - Cons:
+///     - Maximum size is less than `u32::MAX`.
+///     - May contains memory holes
 #[derive(Debug)]
 pub struct AppendLog<S, C = Crc32> {
   opts: Options,
@@ -179,7 +337,7 @@ impl<S, C> AppendLog<S, C> {}
 impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   /// Open an append-only log backed by a bytes slice.
   #[inline]
-  pub fn open(opts: Options, snapshot_opts: S::Options) -> Result<Self, Error<S>> {
+  pub fn new(opts: Options, snapshot_opts: S::Options) -> Result<Self, Error<S>> {
     let map =
       SkipMap::<()>::with_options(map_options(opts.capacity)).map_err(Error::AllocatorError)?;
 
@@ -272,10 +430,15 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
         Ok(())
       }
-      Err(e) => match e {
-        Either::Left(e) => Err(Error::Data(e)),
-        Either::Right(e) => Err(Error::AllocatorError(e)),
-      },
+      Err(e) => {
+        let _ = self
+          .map
+          .compare_remove((), &k, Ordering::AcqRel, Ordering::Release);
+        match e {
+          Either::Left(e) => Err(Error::Data(e)),
+          Either::Right(e) => Err(Error::AllocatorError(e)),
+        }
+      }
     }
   }
 
