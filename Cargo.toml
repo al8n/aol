@@ -11,17 +11,16 @@ rust-version = "1.56"
 
 [features]
 default = ["std"]
-alloc = []
-std = ["thiserror", "rarena-allocator?/std"]
-arena = ["rarena-allocator"]
-memmap = ["rarena-allocator/memmap"]
+alloc = ["skl/alloc"]
+std = ["thiserror", "skl/memmap", "memmap2"]
 
 [dependencies]
 bitflags = "2"
 crc32fast = "1"
 paste = "1"
 
-rarena-allocator = { version = "0.1", default-features = false, features = ["alloc"], optional = true }
+memmap2 = { version = "0.9", optional = true }
+skl = { version = "0.11", path = "../skl-rs", default-features = false, features = ["alloc"], optional = true }
 serde = { version = "1", optional = true, features = ["derive"] }
 thiserror = { version = "1", optional = true }
 

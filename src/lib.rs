@@ -1,7 +1,6 @@
 // #![doc = include_str!("../README.md")]
 //! a
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
-#![cfg_attr(not(feature = "arena"), forbid(unsafe_code))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs, warnings)]
@@ -20,29 +19,26 @@ use std::vec::Vec;
 
 use core::mem;
 
-/// Some [`Manifest`](crate::manifest::Manifest) implementations.
-pub mod manifest;
-pub use manifest::*;
+/// Some [`Snapshot`](crate::snapshot::Snapshot) implementations.
+pub mod snapshot;
+pub use snapshot::*;
 
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod fs;
 
-/// Concurrent safe append-only log implementation based on ARENA (support both in-memory and on-disk).
-#[cfg(feature = "arena")]
-#[cfg_attr(docsrs, doc(cfg(feature = "arena")))]
-pub mod arena;
+/// Append-only log implementation based on ARENA (support both in-memory and on-disk).
+pub mod memmap;
 
 /// In-memory append-only log implementation.
 pub mod memory;
 
-/// Magic text for the manifest file, this will never be changed.
+/// Magic text for the append only log, this will never be changed.
 const MAGIC_TEXT: &[u8] = b"al8n";
 const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
 const MAGIC_LEN: usize = mem::size_of::<u16>();
 const MAGIC_VERSION_LEN: usize = mem::size_of::<u16>();
-const MANIFEST_HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
 const ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE; // flag + len
 const FIXED_MANIFEST_ENTRY_SIZE: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
 const MAX_INLINE_SIZE: usize = 64;
@@ -301,7 +297,7 @@ impl CustomFlags {
   }
 }
 
-/// Flags for the manifest entry.
+/// Flags for the snapshot entry.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]

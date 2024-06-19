@@ -20,12 +20,12 @@ impl Options {
   }
 }
 
-/// The manifest trait, which contains the information about the append-only log.
-pub trait Manifest: Sized {
+/// The snapshot trait, which contains the information about the append-only log.
+pub trait Snapshot: Sized {
   /// The data type.
   type Data: Data;
 
-  /// The options type used to create a new manifest.
+  /// The options type used to create a new snapshot.
   type Options: Clone;
 
   /// The error type.
@@ -36,13 +36,13 @@ pub trait Manifest: Sized {
   #[cfg(not(feature = "std"))]
   type Error: core::fmt::Debug + core::fmt::Display;
 
-  /// Open a new manifest.
+  /// Open a new snapshot.
   fn open(opts: Self::Options) -> Result<Self, Self::Error>;
 
   /// Returns the options.
   fn options(&self) -> &Self::Options;
 
-  /// Returns `true` if the manifest should trigger rewrite.
+  /// Returns `true` if the snapshot should trigger rewrite.
   ///
   /// `size` is the current size of the append-only log.
   fn should_rewrite(&self) -> bool;
@@ -62,64 +62,64 @@ pub trait Manifest: Sized {
 
 /// In-memory generic append-only log implementation.
 #[derive(Debug)]
-pub struct AppendLog<M> {
-  manifest: M,
+pub struct AppendLog<S> {
+  snapshot: S,
 }
 
-impl<M> AppendLog<M> {
-  /// Returns the current manifest.
+impl<S> AppendLog<S> {
+  /// Returns the current snapshot.
   #[inline]
-  pub const fn manifest(&self) -> &M {
-    &self.manifest
+  pub const fn snapshot(&self) -> &S {
+    &self.snapshot
   }
 }
 
-impl<M: Manifest> AppendLog<M> {
-  /// Open and replay the manifest file.
+impl<S: Snapshot> AppendLog<S> {
+  /// Open and replay the append only log.
   #[cfg(feature = "std")]
   #[inline]
-  pub fn open(manifest_opts: M::Options) -> Result<Self, M::Error> {
+  pub fn open(snapshot_opts: S::Options) -> Result<Self, S::Error> {
     Ok(Self {
-      manifest: M::open(manifest_opts)?,
+      snapshot: S::open(snapshot_opts)?,
     })
   }
 
   /// Append an entry to the append-only file.
   #[inline]
-  pub fn append(&mut self, ent: Entry<M::Data>) -> Result<(), M::Error> {
+  pub fn append(&mut self, ent: Entry<S::Data>) -> Result<(), S::Error> {
     self.append_in(ent)
   }
 
   /// Append a batch of entries to the append-only file.
   pub fn append_batch(
     &mut self,
-    entries: impl Iterator<Item = Entry<M::Data>>,
-  ) -> Result<(), M::Error> {
-    if self.manifest.should_rewrite() {
+    entries: impl Iterator<Item = Entry<S::Data>>,
+  ) -> Result<(), S::Error> {
+    if self.snapshot.should_rewrite() {
       self.rewrite()?;
     }
 
-    self.manifest.insert_batch(entries)
+    self.snapshot.insert_batch(entries)
   }
 
   #[inline]
-  fn append_in(&mut self, entry: Entry<M::Data>) -> Result<(), M::Error> {
-    if self.manifest.should_rewrite() {
+  fn append_in(&mut self, entry: Entry<S::Data>) -> Result<(), S::Error> {
+    if self.snapshot.should_rewrite() {
       self.rewrite()?;
     }
 
-    self.manifest.insert(entry)
+    self.snapshot.insert(entry)
   }
 
   #[inline]
-  fn rewrite(&mut self) -> Result<(), M::Error> {
-    let manifest_opts = self.manifest.options().clone();
-    let manifest = M::open(manifest_opts)?;
-    let old = mem::replace(&mut self.manifest, manifest);
+  fn rewrite(&mut self) -> Result<(), S::Error> {
+    let snapshot_opts = self.snapshot.options().clone();
+    let snapshot = S::open(snapshot_opts)?;
+    let old = mem::replace(&mut self.snapshot, snapshot);
 
     for ent in old.into_iter() {
       if ent.flag.is_creation() {
-        self.manifest.insert(ent)?;
+        self.snapshot.insert(ent)?;
       }
     }
 

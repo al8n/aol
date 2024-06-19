@@ -52,7 +52,7 @@ impl crate::Data for Fid {
   }
 }
 
-/// Manifest represents the contents of the MANIFEST file in a store based on bitcask + wisckey.
+/// Snapshot represents the contents of the MANIFEST file in a store based on bitcask + wisckey.
 ///
 /// The MANIFEST file describes the startup state of the db -- all logs files.
 ///
@@ -64,7 +64,7 @@ impl crate::Data for Fid {
 /// If the bit is set, then it's a value log file, otherwise it's a log file.
 #[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Manifest {
+pub struct Snapshot {
   vlogs: HashSet<Fid>,
   logs: HashSet<Fid>,
 
@@ -74,7 +74,7 @@ pub struct Manifest {
   deletions: u64,
 }
 
-impl Manifest {
+impl Snapshot {
   /// Create a new append-only.
   #[inline]
   pub fn new() -> Self {
@@ -87,7 +87,7 @@ impl Manifest {
   }
 }
 
-impl crate::Manifest for Manifest {
+impl crate::Snapshot for Snapshot {
   type Data = Fid;
 
   type Error = core::convert::Infallible;

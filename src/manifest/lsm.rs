@@ -9,7 +9,7 @@ use hashbrown::{HashMap, HashSet};
 const TABLE_ID_SIZE: usize = mem::size_of::<u64>();
 const LEVEL_SIZE: usize = mem::size_of::<u8>();
 
-/// Error for [`Manifest`].
+/// Error for [`Snapshot`].
 #[derive(Debug)]
 pub enum Error {
   /// The table already exists.
@@ -30,32 +30,32 @@ impl core::fmt::Display for Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
-/// Manifest represents the contents of the MANIFEST file in a store.
+/// Snapshot represents the contents of the MANIFEST file in a store.
 ///
 /// The MANIFEST file describes the startup state of the db -- all LSM files and what level they're
 /// at.
 ///
-/// It consists of a sequence of [`ManifestChange`] objects. Each of these is treated atomically,
-/// and contains a sequence of ManifestChange's (file creations/deletions) which we use to
+/// It consists of a sequence of [`SnapshotChange`] objects. Each of these is treated atomically,
+/// and contains a sequence of SnapshotChange's (file creations/deletions) which we use to
 /// reconstruct the append-only at startup.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Manifest<D> {
-  levels: Vec<LevelManifest>,
-  tables: HashMap<u64, TableManifest<D>>,
+pub struct Snapshot<D> {
+  levels: Vec<LevelSnapshot>,
+  tables: HashMap<u64, TableSnapshot<D>>,
 
   creations: u64,
   deletions: u64,
 }
 
-impl<D> Default for Manifest<D> {
+impl<D> Default for Snapshot<D> {
   #[inline]
   fn default() -> Self {
     Self::new()
   }
 }
 
-impl<D> Manifest<D> {
+impl<D> Snapshot<D> {
   /// Returns a new append-only.
   #[inline]
   pub fn new() -> Self {
@@ -69,19 +69,19 @@ impl<D> Manifest<D> {
 
   /// Returns the levels in the append-only.
   #[inline]
-  pub fn levels(&self) -> &[LevelManifest] {
+  pub fn levels(&self) -> &[LevelSnapshot] {
     &self.levels
   }
 
   /// Returns the tables in the append-only.
   #[inline]
-  pub fn tables(&self) -> &HashMap<u64, TableManifest<D>> {
+  pub fn tables(&self) -> &HashMap<u64, TableSnapshot<D>> {
     &self.tables
   }
 }
 
-impl<D: Data> crate::Manifest for Manifest<D> {
-  type Data = ManifestChange<D>;
+impl<D: Data> crate::Snapshot for Snapshot<D> {
+  type Data = SnapshotChange<D>;
 
   type Error = Error;
 
@@ -103,13 +103,13 @@ impl<D: Data> crate::Manifest for Manifest<D> {
         None => {
           self.tables.insert(
             entry.data.id,
-            TableManifest {
+            TableSnapshot {
               level: entry.data.level,
               data: entry.data.data,
             },
           );
           while self.levels.len() <= entry.data.level as usize {
-            self.levels.push(LevelManifest {
+            self.levels.push(LevelSnapshot {
               tables: HashSet::new(),
             });
           }
@@ -125,7 +125,7 @@ impl<D: Data> crate::Manifest for Manifest<D> {
 
   fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>> {
     self.tables.into_iter().map(|(id, table)| Entry {
-      data: ManifestChange {
+      data: SnapshotChange {
         id,
         level: table.level,
         data: table.data,
@@ -146,13 +146,13 @@ impl<D: Data> crate::Manifest for Manifest<D> {
 /// Represents a change in the append-only.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ManifestChange<D> {
+pub struct SnapshotChange<D> {
   id: u64,
   level: u8,
   data: D,
 }
 
-impl<D> ManifestChange<D> {
+impl<D> SnapshotChange<D> {
   /// Creates a new append-only change.
   #[inline]
   pub const fn new(id: u64, level: u8, data: D) -> Self {
@@ -178,7 +178,7 @@ impl<D> ManifestChange<D> {
   }
 }
 
-impl<D: Data> Data for ManifestChange<D> {
+impl<D: Data> Data for SnapshotChange<D> {
   type Error = D::Error;
 
   fn encoded_size(&self) -> usize {
@@ -215,12 +215,12 @@ impl<D: Data> Data for ManifestChange<D> {
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
-pub struct LevelManifest {
+pub struct LevelSnapshot {
   /// Set of table id's
   tables: HashSet<u64>,
 }
 
-impl LevelManifest {
+impl LevelSnapshot {
   /// Returns the tables in the level.
   #[inline]
   pub fn tables(&self) -> &HashSet<u64> {
@@ -232,13 +232,13 @@ impl LevelManifest {
 /// in the LSM tree.
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TableManifest<D> {
+pub struct TableSnapshot<D> {
   /// Level of the table
   level: u8,
   data: D,
 }
 
-impl<D> TableManifest<D> {
+impl<D> TableSnapshot<D> {
   /// Returns the level of the table.
   #[inline]
   pub const fn level(&self) -> u8 {

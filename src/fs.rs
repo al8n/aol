@@ -1,18 +1,23 @@
 use std::{
   fs::{File, OpenOptions},
-  io::{self, BufReader, Read, Write},
+  io::{self, Write},
   path::PathBuf,
 };
 
 use super::*;
 
 const CURRENT_VERSION: u16 = 0;
+const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
 
 /// Errors for append-only file.
 #[derive(Debug)]
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub enum Error<M: Manifest> {
-  /// Manifest has bad magic.
+pub enum Error<S: Snapshot> {
+  /// Missing corrupted append-only log header.
+  #[error("missing append-only log header, log may be corrupted")]
+  CorruptedHeader,
+
+  /// Snapshot has bad magic.
   #[error("append-only has bad magic text")]
   BadMagicText,
   /// Cannot open append-only because the external magic doesn't match.
@@ -49,18 +54,18 @@ pub enum Error<M: Manifest> {
 
   /// Encode/decode data error.
   #[error(transparent)]
-  Data(<M::Data as Data>::Error),
+  Data(<S::Data as Data>::Error),
 
-  /// Manifest error.
+  /// Snapshot error.
   #[error(transparent)]
-  Manifest(M::Error),
+  Snapshot(S::Error),
 
   /// I/O error.
   #[error(transparent)]
   IO(#[from] io::Error),
 }
 
-impl<M: Manifest> Error<M> {
+impl<S: Snapshot> Error<S> {
   /// Create a new `Error` from an I/O error.
   #[inline]
   pub const fn io(err: io::Error) -> Self {
@@ -69,14 +74,14 @@ impl<M: Manifest> Error<M> {
 
   /// Create a new `Error` from a data error.
   #[inline]
-  pub const fn data(err: <M::Data as Data>::Error) -> Self {
+  pub const fn data(err: <S::Data as Data>::Error) -> Self {
     Self::Data(err)
   }
 
   /// Create a new `Error` from an unknown append-only event.
   #[inline]
-  pub const fn manifest(err: M::Error) -> Self {
-    Self::Manifest(err)
+  pub const fn snapshot(err: S::Error) -> Self {
+    Self::Snapshot(err)
   }
 
   /// Create a new `Corrupted` error.
@@ -86,14 +91,12 @@ impl<M: Manifest> Error<M> {
   }
 }
 
-/// The manifest trait, manifest should contains the information about the append-only log,
-/// which is the minimum memory representation of the append-only log, which can be used to
-/// rewrite the append-only log.
-pub trait Manifest: Sized {
+/// The snapshot trait, snapshot may contain some in-memory information about the append-only log.
+pub trait Snapshot: Sized {
   /// The data type.
   type Data: Data;
 
-  /// The options type used to create a new manifest.
+  /// The options type used to create a new snapshot.
   type Options: Clone;
 
   /// The error type.
@@ -104,13 +107,13 @@ pub trait Manifest: Sized {
   #[cfg(not(feature = "std"))]
   type Error: core::fmt::Debug + core::fmt::Display;
 
-  /// Open a new manifest.
-  fn open(opts: Self::Options) -> Result<Self, Self::Error>;
+  /// Create a new snapshot.
+  fn new(opts: Self::Options) -> Result<Self, Self::Error>;
 
   /// Returns the options.
   fn options(&self) -> &Self::Options;
 
-  /// Returns `true` if the manifest should trigger rewrite.
+  /// Returns `true` if the snapshot should trigger rewrite.
   ///
   /// `size` is the current size of the append-only log.
   fn should_rewrite(&self, size: u64) -> bool;
@@ -119,16 +122,10 @@ pub trait Manifest: Sized {
   fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(
-    &mut self,
-    entries: Vec<Entry<Self::Data>>,
-  ) -> Result<(), Self::Error>;
-
-  /// Iterate over the entries.
-  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>>;
+  fn insert_batch(&mut self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error>;
 }
 
-/// Options for the manifest file.
+/// Options for the append only log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Options {
@@ -244,22 +241,23 @@ impl Options {
 /// Generic append-only log implementation based on [`std::fs::File`].
 ///
 /// Compared to [`arena::AppendLog`](crate::arena::AppendLog):
-/// 
+///
 /// - Pros:
 ///   - It is growable, do not require pre-allocated.
 ///   - Support automatic rewrite.
-/// 
+///   - No holes in the file.
+///
 /// - Cons:
 ///   - Read and write may require extra allocations for encoding and decoding.
 ///   - Each write requires an I/O system call.
 ///   - To use it in concurrent environment, `Mutex` or `RwLock` is required.
 ///   - Do not support in-memory mode.
 ///   - Cannot be used in `no_std` environment.
-/// 
+///
 /// It is good for:
 /// - Append-only log which size cannot reach `4GB`.
 /// - End-users who can manage the grow and rewrite by themselves.
-/// 
+///
 /// File structure:
 ///
 /// ```text
@@ -274,56 +272,56 @@ impl Options {
 /// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
 /// ```
 #[derive(Debug)]
-pub struct AppendLog<M, C = Crc32> {
+pub struct AppendLog<S, C = Crc32> {
   opts: Options,
   filename: PathBuf,
   rewrite_filename: PathBuf,
   file: Option<File>,
   len: u64,
-  manifest: M,
+  snapshot: S,
   _checksumer: core::marker::PhantomData<C>,
 }
 
-impl<M, C> AppendLog<M, C> {
-  /// Returns the options of the manifest file.
+impl<S, C> AppendLog<S, C> {
+  /// Returns the options of the append only log.
   #[inline]
   pub const fn options(&self) -> &Options {
     &self.opts
   }
 
-  /// Returns the current manifest.
+  /// Returns the current snapshot.
   #[inline]
-  pub const fn manifest(&self) -> &M {
-    &self.manifest
+  pub const fn snapshot(&self) -> &S {
+    &self.snapshot
   }
 }
 
-impl<M: Manifest, C> AppendLog<M, C> {
-  /// Flush the manifest file.
+impl<S: Snapshot, C> AppendLog<S, C> {
+  /// Flush the append only log.
   #[inline]
-  pub fn flush(&mut self) -> Result<(), Error<M>> {
+  pub fn flush(&mut self) -> Result<(), Error<S>> {
     // unwrap is ok, because this log cannot be used in concurrent environment
     self.file.as_mut().unwrap().flush().map_err(Error::io)
   }
 
-  /// Sync the manifest file.
+  /// Sync the append only log.
   #[inline]
-  pub fn sync_all(&self) -> Result<(), Error<M>> {
+  pub fn sync_all(&self) -> Result<(), Error<S>> {
     // unwrap is ok, because this log cannot be used in concurrent environment
     self.file.as_ref().unwrap().sync_all().map_err(Error::io)
   }
 }
 
-impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
-  /// Open and replay the manifest file.
+impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+  /// Open and replay the append only log.
   #[cfg(feature = "std")]
   #[inline]
   pub fn open<P: AsRef<std::path::Path>>(
     path: P,
-    manifest_opts: M::Options,
+    snapshot_opts: S::Options,
     file_opts: OpenOptions,
     opts: Options,
-  ) -> Result<Self, Error<M>> {
+  ) -> Result<Self, Error<S>> {
     let existing = path.as_ref().exists();
     let path = path.as_ref();
     let mut rewrite_path = path.to_path_buf();
@@ -335,7 +333,7 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
       file,
       existing,
       opts,
-      manifest_opts,
+      snapshot_opts,
     )
   }
 
@@ -347,13 +345,13 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
 
   /// Append an entry to the append-only file.
   #[inline]
-  pub fn append(&mut self, ent: Entry<M::Data>) -> Result<(), Error<M>> {
+  pub fn append(&mut self, ent: Entry<S::Data>) -> Result<(), Error<S>> {
     self.append_in(ent)
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(&mut self, entries: Vec<Entry<M::Data>>) -> Result<(), Error<M>> {
-    if self.manifest.should_rewrite(self.len) {
+  pub fn append_batch(&mut self, entries: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+    if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }
 
@@ -380,35 +378,35 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
     if total_encoded_size > MAX_INLINE_SIZE {
       let mut buf = std::vec![0; total_encoded_size];
       encode_batch!(buf);
-      file
-        .write_all(&buf)
-        .map_err(Error::io)
-        .and_then(|_| {
-          self.len += total_encoded_size as u64;
-          self.manifest.insert_batch(entries).map_err(Error::manifest)?;
-          if self.opts.sync_on_write {
-            file.flush().map_err(Error::io)
-          } else {
-            Ok(())
-          }
-        })
+      file.write_all(&buf).map_err(Error::io).and_then(|_| {
+        self.len += total_encoded_size as u64;
+        self
+          .snapshot
+          .insert_batch(entries)
+          .map_err(Error::snapshot)?;
+        if self.opts.sync_on_write {
+          file.flush().map_err(Error::io)
+        } else {
+          Ok(())
+        }
+      })
     } else {
       let mut buf = [0; MAX_INLINE_SIZE];
       let buf = &mut buf[..total_encoded_size];
       encode_batch!(buf);
 
-      file
-        .write_all(buf)
-        .map_err(Error::io)
-        .and_then(|_| {
-          self.len += total_encoded_size as u64;
-          self.manifest.insert_batch(entries).map_err(Error::manifest)?;
-          if self.opts.sync_on_write {
-            file.flush().map_err(Error::io)
-          } else {
-            Ok(())
-          }
-        })
+      file.write_all(buf).map_err(Error::io).and_then(|_| {
+        self.len += total_encoded_size as u64;
+        self
+          .snapshot
+          .insert_batch(entries)
+          .map_err(Error::snapshot)?;
+        if self.opts.sync_on_write {
+          file.flush().map_err(Error::io)
+        } else {
+          Ok(())
+        }
+      })
     }
   }
 
@@ -418,11 +416,13 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
     mut file: File,
     existing: bool,
     opts: Options,
-    manifest_opts: M::Options,
-  ) -> Result<Self, Error<M>> {
+    snapshot_opts: S::Options,
+  ) -> Result<Self, Error<S>> {
     let Options { magic_version, .. } = opts;
 
-    if !existing {
+    let size = file.metadata().map_err(Error::io)?.len();
+
+    if !existing || size == 0 {
       Self::write_header(&mut file, magic_version)?;
 
       let len = file.metadata().map_err(Error::io)?.len();
@@ -430,26 +430,25 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
         filename,
         rewrite_filename,
         file: Some(file),
-        manifest: M::open(manifest_opts).map_err(Error::manifest)?,
+        snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
         _checksumer: core::marker::PhantomData,
         opts,
         len,
       });
     }
 
-    let size = file.metadata().map_err(Error::io)?.len();
+    if size < HEADER_SIZE as u64 {
+      return Err(Error::CorruptedHeader);
+    }
 
-    let mut header = [0; MANIFEST_HEADER_SIZE];
+    let mmap = unsafe { memmap2::Mmap::map(&file)? };
 
-    let mut file = BufReader::new(file);
-    file.read_exact(&mut header).map_err(Error::io)?;
-
-    if &header[..MAGIC_TEXT_LEN] != MAGIC_TEXT {
+    if &mmap[..MAGIC_TEXT_LEN] != MAGIC_TEXT {
       return Err(Error::BadMagicText);
     }
 
     let external = u16::from_le_bytes(
-      header[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + MAGIC_VERSION_LEN]
+      mmap[MAGIC_TEXT_LEN..MAGIC_TEXT_LEN + MAGIC_VERSION_LEN]
         .try_into()
         .unwrap(),
     );
@@ -461,7 +460,7 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
     }
 
     let version = u16::from_le_bytes(
-      header[MAGIC_TEXT_LEN + MAGIC_VERSION_LEN..MANIFEST_HEADER_SIZE]
+      mmap[MAGIC_TEXT_LEN + MAGIC_VERSION_LEN..HEADER_SIZE]
         .try_into()
         .unwrap(),
     );
@@ -472,64 +471,49 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
       });
     }
 
-    let mut manifest = M::open(manifest_opts).map_err(Error::manifest)?;
+    let mut snapshot = S::new(snapshot_opts).map_err(Error::snapshot)?;
 
-    let mut curosr = 0;
+    let mut read_cursor = HEADER_SIZE;
+
     loop {
-      let mut header_buf = [0; ENTRY_HEADER_SIZE];
-      match file.read_exact(&mut header_buf) {
-        Ok(()) => {
-          curosr += ENTRY_HEADER_SIZE;
-
-          let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
-          let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
-
-          let remaining = size - MANIFEST_HEADER_SIZE as u64 - curosr as u64;
-          let needed = len + CHECKSUM_SIZE;
-          if needed as u64 > remaining {
-            return Err(Error::entry_corrupted(needed as u32, remaining as u32));
-          }
-
-          if entry_size > MAX_INLINE_SIZE {
-            let mut buf = std::vec![0; entry_size];
-            buf[..ENTRY_HEADER_SIZE].copy_from_slice(&header_buf);
-            file
-              .read_exact(&mut buf[ENTRY_HEADER_SIZE..])
-              .map_err(Error::io)?;
-            let ent = Entry::decode::<C>(&buf).map_err(|e| match e {
-              Some(e) => Error::data(e),
-              None => Error::ChecksumMismatch,
-            })?;
-            manifest.insert(ent).map_err(Error::manifest)?;
-          } else {
-            let mut buf = [0; MAX_INLINE_SIZE];
-            buf[..ENTRY_HEADER_SIZE].copy_from_slice(&header_buf);
-            let buf = &mut buf[ENTRY_HEADER_SIZE..ENTRY_HEADER_SIZE + len + CHECKSUM_SIZE];
-            file.read_exact(buf).map_err(Error::io)?;
-            let ent = Entry::decode::<C>(buf).map_err(|e| match e {
-              Some(e) => Error::data(e),
-              None => Error::ChecksumMismatch,
-            })?;
-            manifest.insert(ent).map_err(Error::manifest)?;
-          }
-          curosr += len + CHECKSUM_SIZE;
-        }
-        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-        Err(e) => return Err(Error::io(e)),
+      if read_cursor + ENTRY_HEADER_SIZE > mmap.len() {
+        break;
       }
+
+      let mut header_buf = [0; ENTRY_HEADER_SIZE];
+      header_buf.copy_from_slice(&mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
+
+      let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
+      let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
+
+      let remaining = size - HEADER_SIZE as u64 - read_cursor as u64;
+      let needed = FIXED_MANIFEST_ENTRY_SIZE + len;
+      if needed as u64 > remaining {
+        return Err(Error::entry_corrupted(needed as u32, remaining as u32));
+      }
+
+      let (readed, ent) = Entry::decode::<C>(&mmap[read_cursor..read_cursor + entry_size])
+        .map_err(|e| match e {
+          Some(e) => Error::data(e),
+          None => Error::ChecksumMismatch,
+        })?;
+      snapshot.insert(ent).map_err(Error::snapshot)?;
+      read_cursor += readed;
     }
+
+    drop(mmap);
 
     let mut this = Self {
       filename,
       rewrite_filename,
-      file: Some(file.into_inner()),
-      manifest,
+      file: Some(file),
+      snapshot,
       len: size,
       _checksumer: core::marker::PhantomData,
       opts,
     };
 
-    if this.manifest.should_rewrite(this.len) {
+    if this.snapshot.should_rewrite(this.len) {
       return this.rewrite().map(|_| this);
     }
 
@@ -537,41 +521,53 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
   }
 
   #[inline]
-  fn write_header(file: &mut File, magic_version: u16) -> Result<(), Error<M>> {
-    let mut buf = [0; MANIFEST_HEADER_SIZE];
+  fn write_header(file: &mut File, magic_version: u16) -> Result<(), Error<S>> {
+    let mut buf = [0; HEADER_SIZE];
     let mut cur = 0;
     buf[..MAGIC_TEXT_LEN].copy_from_slice(MAGIC_TEXT);
     cur += MAGIC_TEXT_LEN;
     buf[cur..cur + MAGIC_VERSION_LEN].copy_from_slice(&magic_version.to_le_bytes());
     cur += MAGIC_VERSION_LEN;
-    buf[cur..MANIFEST_HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
+    buf[cur..HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
     file.write_all(&buf).map_err(Error::io)?;
     file.flush().map_err(Error::io)
   }
 
   #[inline]
-  fn append_in(&mut self, entry: Entry<M::Data>) -> Result<(), Error<M>> {
-    if self.manifest.should_rewrite(self.len) {
+  fn write_header_to_slice(bytes: &mut [u8], magic_version: u16) {
+    let mut buf = [0; HEADER_SIZE];
+    let mut cur = 0;
+    buf[..MAGIC_TEXT_LEN].copy_from_slice(MAGIC_TEXT);
+    cur += MAGIC_TEXT_LEN;
+    buf[cur..cur + MAGIC_VERSION_LEN].copy_from_slice(&magic_version.to_le_bytes());
+    cur += MAGIC_VERSION_LEN;
+    buf[cur..HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
+    bytes.copy_from_slice(&buf);
+  }
+
+  #[inline]
+  fn append_in(&mut self, entry: Entry<S::Data>) -> Result<(), Error<S>> {
+    if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }
 
     // unwrap is ok, because this log cannot be used in concurrent environment
-    append::<M, C>(self.file.as_mut().unwrap(), &entry, self.opts.sync_on_write).and_then(|len| {
+    append::<S, C>(self.file.as_mut().unwrap(), &entry, self.opts.sync_on_write).and_then(|len| {
       self.len += len as u64;
-      self.manifest.insert(entry).map_err(Error::manifest)
+      self.snapshot.insert(entry).map_err(Error::snapshot)
     })
   }
 
-  fn rewrite(&mut self) -> Result<(), Error<M>> {
+  fn rewrite(&mut self) -> Result<(), Error<S>> {
     thread_local! {
       static REWRITE_FILE_NAME: core::cell::RefCell<Option<std::path::PathBuf>> = core::cell::RefCell::new(None);
     }
 
-    let manifest_opts = self.manifest.options().clone();
-    let manifest = M::open(manifest_opts).map_err(Error::manifest)?;
-    let old = mem::replace(&mut self.manifest, manifest);
+    let snapshot_opts = self.snapshot.options().clone();
+    let snapshot = S::new(snapshot_opts).map_err(Error::snapshot)?;
+    let _ = mem::replace(&mut self.snapshot, snapshot);
 
-    let _ = self.file.take().unwrap();
+    let old_file = self.file.take().unwrap();
 
     let mut new_file = OpenOptions::new()
       .create(true)
@@ -580,19 +576,65 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
       .truncate(true)
       .open(&self.rewrite_filename)
       .map_err(Error::io)?;
+    new_file.set_len(self.len)?;
 
-    Self::write_header(&mut new_file, self.opts.magic_version)?;
+    // create memory map for fast read and write
+    let (mut new_mmap, old_mmap) = unsafe {
+      (
+        memmap2::MmapMut::map_mut(&new_file).map_err(Error::io)?,
+        memmap2::Mmap::map(&old_file).map_err(Error::io)?,
+      )
+    };
 
-    for ent in old.into_iter() {
-      if ent.flag.is_creation() {
-        append::<M, C>(&mut new_file, &ent, false)
-          .and_then(|_| self.manifest.insert(ent).map_err(Error::manifest))?;
+    Self::write_header_to_slice(&mut new_mmap, self.opts.magic_version);
+
+    let mut read_cursor = HEADER_SIZE;
+    let mut write_cursor = HEADER_SIZE;
+
+    loop {
+      if read_cursor + ENTRY_HEADER_SIZE > old_mmap.len() {
+        break;
       }
+
+      let mut header_buf = [0; ENTRY_HEADER_SIZE];
+      header_buf.copy_from_slice(&old_mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
+
+      let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
+      let flag = EntryFlags {
+        value: header_buf[0],
+      };
+      if flag.is_deletion() {
+        read_cursor += FIXED_MANIFEST_ENTRY_SIZE + len;
+        continue;
+      }
+
+      let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
+
+      let remaining = self.len - HEADER_SIZE as u64 - read_cursor as u64;
+      let needed = FIXED_MANIFEST_ENTRY_SIZE + len;
+      if needed as u64 > remaining {
+        return Err(Error::entry_corrupted(needed as u32, remaining as u32));
+      }
+
+      let (readed, ent) = Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + entry_size])
+        .map_err(|e| match e {
+          Some(e) => Error::data(e),
+          None => Error::ChecksumMismatch,
+        })?;
+      self.snapshot.insert(ent).map_err(Error::snapshot)?;
+      new_mmap[write_cursor..write_cursor + readed]
+        .copy_from_slice(&old_mmap[read_cursor..read_cursor + readed]);
+      read_cursor += readed;
+      write_cursor += readed;
     }
 
     new_file.flush().map_err(Error::io)?;
     new_file.sync_all().map_err(Error::io)?;
+    drop(new_mmap);
+    drop(old_mmap);
     drop(new_file);
+    drop(old_file);
+
     std::fs::rename(&self.rewrite_filename, &self.filename).map_err(Error::io)?;
 
     let file = OpenOptions::new()
@@ -614,11 +656,11 @@ impl<M: Manifest, C: Checksumer> AppendLog<M, C> {
   }
 }
 
-fn append<M: Manifest, C: Checksumer>(
+fn append<S: Snapshot, C: Checksumer>(
   file: &mut File,
-  ent: &Entry<M::Data>,
+  ent: &Entry<S::Data>,
   sync: bool,
-) -> Result<usize, Error<M>> {
+) -> Result<usize, Error<S>> {
   let encoded_len = ent.data.encoded_size();
   if encoded_len + FIXED_MANIFEST_ENTRY_SIZE > MAX_INLINE_SIZE {
     let mut buf = Vec::with_capacity(encoded_len + FIXED_MANIFEST_ENTRY_SIZE);
