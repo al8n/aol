@@ -817,8 +817,9 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     let total_encoded_size = entries
       .iter()
       .map(|ent| ent.data.encoded_size())
-      .sum::<usize>()
-      + entries.len() * FIXED_MANIFEST_ENTRY_SIZE;
+      .fold(entries.len() * FIXED_MANIFEST_ENTRY_SIZE, |acc, val| {
+        acc + val
+      });
 
     if total_encoded_size > self.capacity {
       return Err(Error::entry_corrupted(
