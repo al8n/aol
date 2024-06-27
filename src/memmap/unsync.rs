@@ -117,9 +117,6 @@ pub trait Snapshot: Sized {
   /// Create a new snapshot.
   fn new(opts: Self::Options) -> Result<Self, Self::Error>;
 
-  /// Returns the options.
-  fn options(&self) -> &Self::Options;
-
   /// Returns `true` if the snapshot should trigger rewrite.
   ///
   /// `remaining` is the remaining size of the append-only log.
@@ -373,7 +370,7 @@ impl Memmap {
     match self {
       Memmap::Map { .. } => Err(read_only_error().into()),
       Memmap::MapMut { mmap, .. } => {
-        let encoded_len = data_encoded_len + FIXED_MANIFEST_ENTRY_SIZE;
+        let encoded_len = data_encoded_len + FIXED_ENTRY_LEN;
 
         if encoded_len > mmap.len() - len {
           return Err(Error::entry_corrupted(encoded_len, mmap.len() - len));
@@ -418,7 +415,7 @@ impl Memmap {
 
   fn rewrite_in<S: Snapshot, C: Checksumer>(
     old_mmap: &mut [u8],
-    old_file: &mut File,
+    _old_file: &mut File,
     filename: &PathBuf,
     rewrite_filename: &PathBuf,
     snapshot: &mut S,
@@ -469,7 +466,7 @@ impl Memmap {
             skipped += 1;
           }
 
-          read_cursor += FIXED_MANIFEST_ENTRY_SIZE + len;
+          read_cursor += FIXED_ENTRY_LEN + len;
         }
       }
     }
@@ -482,42 +479,40 @@ impl Memmap {
       let mut header_buf = [0; ENTRY_HEADER_SIZE];
       header_buf.copy_from_slice(&old_mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
 
-      let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
+      let encoded_data_len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
       let flag = EntryFlags {
         value: header_buf[0],
       };
       if flag.is_deletion() {
-        read_cursor += FIXED_MANIFEST_ENTRY_SIZE + len;
+        read_cursor += FIXED_ENTRY_LEN + encoded_data_len;
         continue;
       }
 
-      let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
-
-      let remaining = len - HEADER_SIZE - read_cursor;
-      let needed = FIXED_MANIFEST_ENTRY_SIZE + len;
+      let remaining = len - read_cursor;
+      let needed = FIXED_ENTRY_LEN + encoded_data_len;
       if needed > remaining {
         return Err(Error::entry_corrupted(needed, remaining));
       }
 
-      let (readed, ent) = Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + entry_size])
-        .map_err(|e| match e {
+      let (_, ent) =
+        Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + needed]).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
       snapshot.insert(ent).map_err(Error::snapshot)?;
-      new_mmap[write_cursor..write_cursor + readed]
-        .copy_from_slice(&old_mmap[read_cursor..read_cursor + readed]);
-      read_cursor += readed;
-      write_cursor += readed;
+      new_mmap[write_cursor..write_cursor + needed]
+        .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
+      read_cursor += needed;
+      write_cursor += needed;
     }
 
     new_file.flush().map_err(Error::io)?;
     new_file.sync_all().map_err(Error::io)?;
 
-    unsafe {
-      core::ptr::drop_in_place(old_mmap);
-      core::ptr::drop_in_place(old_file);
-    }
+    // unsafe {
+    //   core::ptr::drop_in_place(old_mmap);
+    //   core::ptr::drop_in_place(old_file);
+    // }
     drop(new_mmap);
     drop(new_file);
 
@@ -781,13 +776,13 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     let data_encoded_len = ent.data.encoded_size();
     if data_encoded_len > self.capacity {
       return Err(Error::entry_corrupted(
-        data_encoded_len + FIXED_MANIFEST_ENTRY_SIZE,
+        data_encoded_len + FIXED_ENTRY_LEN,
         self.capacity - self.len,
       ));
     }
 
     if self.snapshot.should_rewrite(self.capacity - self.len)
-      || data_encoded_len + FIXED_MANIFEST_ENTRY_SIZE > self.capacity - self.len
+      || data_encoded_len + FIXED_ENTRY_LEN > self.capacity - self.len
     {
       self.len = Memmap::rewrite::<S, C>(
         self.file.as_mut().unwrap(),
@@ -813,13 +808,11 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(&mut self, entries: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
-    let total_encoded_size = entries
+  pub fn append_batch(&mut self, batch: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+    let total_encoded_size = batch
       .iter()
       .map(|ent| ent.data.encoded_size())
-      .fold(entries.len() * FIXED_MANIFEST_ENTRY_SIZE, |acc, val| {
-        acc + val
-      });
+      .fold(batch.len() * FIXED_ENTRY_LEN, |acc, val| acc + val);
 
     if total_encoded_size > self.capacity {
       return Err(Error::entry_corrupted(
@@ -841,13 +834,13 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       )?;
     }
 
-    self.append_batch_in(entries, total_encoded_size)
+    self.append_batch_in(batch, total_encoded_size)
   }
 
   #[inline]
   fn append_batch_in(
     &mut self,
-    entries: Vec<Entry<S::Data>>,
+    batch: Vec<Entry<S::Data>>,
     total_encoded_len: usize,
   ) -> Result<(), Error<S>> {
     self.len =
@@ -855,8 +848,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         .file
         .as_mut()
         .unwrap()
-        .append_batch::<S, C>(self.len, &entries, total_encoded_len)?;
-    self.snapshot.insert_batch(entries).map_err(Error::snapshot)
+        .append_batch::<S, C>(self.len, &batch, total_encoded_len)?;
+    self.snapshot.insert_batch(batch).map_err(Error::snapshot)
   }
 
   /// Rewrite the append-only log.
@@ -962,22 +955,26 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       let mut header_buf = [0; ENTRY_HEADER_SIZE];
       header_buf.copy_from_slice(&mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
 
-      let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
-      let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
+      if header_buf == [0; ENTRY_HEADER_SIZE]
+        && mmap[read_cursor + ENTRY_HEADER_SIZE..read_cursor + FIXED_ENTRY_LEN]
+          == [0; FIXED_ENTRY_LEN - ENTRY_HEADER_SIZE]
+      {
+        break;
+      }
 
-      let remaining = size - HEADER_SIZE - read_cursor;
-      let needed = FIXED_MANIFEST_ENTRY_SIZE + len;
+      let encoded_data_len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
+      let remaining = size - read_cursor;
+      let needed = FIXED_ENTRY_LEN + encoded_data_len;
       if needed > remaining {
         return Err(Error::entry_corrupted(needed, remaining));
       }
-
-      let (readed, ent) = Entry::decode::<C>(&mmap[read_cursor..read_cursor + entry_size])
-        .map_err(|e| match e {
+      let (_, ent) =
+        Entry::decode::<C>(&mmap[read_cursor..read_cursor + needed]).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
       snapshot.insert(ent).map_err(Error::snapshot)?;
-      read_cursor += readed;
+      read_cursor += needed;
     }
 
     let mut this = Self {
@@ -1014,7 +1011,7 @@ fn write_header_to_slice(bytes: &mut [u8], magic_version: u16) {
   buf[cur..cur + MAGIC_VERSION_LEN].copy_from_slice(&magic_version.to_le_bytes());
   cur += MAGIC_VERSION_LEN;
   buf[cur..HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
-  bytes.copy_from_slice(&buf);
+  bytes[..HEADER_SIZE].copy_from_slice(&buf);
 }
 
 #[inline]

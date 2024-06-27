@@ -80,7 +80,7 @@ impl<D> Snapshot<D> {
   }
 }
 
-impl<D: Data> crate::Snapshot for Snapshot<D> {
+impl<D: Data> super::Snapshot for Snapshot<D> {
   type Data = SnapshotChange<D>;
 
   type Error = Error;

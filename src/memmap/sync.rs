@@ -418,7 +418,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     let res = self.map.insert_with_value::<<S::Data as Data>::Error>(
       (),
       &k,
-      (data_size + FIXED_MANIFEST_ENTRY_SIZE) as u32,
+      (data_size + FIXED_ENTRY_LEN) as u32,
       |buf| {
         buf.fill(0);
         entry.encode::<C>(data_size, buf)?;
@@ -454,7 +454,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       .iter()
       .map(|ent| ent.data.encoded_size())
       .sum::<usize>()
-      + entries.len() * FIXED_MANIFEST_ENTRY_SIZE;
+      + entries.len() * FIXED_ENTRY_LEN;
 
     macro_rules! encode_batch {
       ($buf:ident) => {{

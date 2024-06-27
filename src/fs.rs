@@ -462,6 +462,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   /// Append an entry to the append-only file.
+  ///
+  /// Returns the position of the entry in the append-only file.
   #[inline]
   pub fn append(&mut self, entry: Entry<S::Data>) -> Result<(), Error<S>> {
     if self.snapshot.should_rewrite(self.len) {
@@ -480,26 +482,24 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(&mut self, entries: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+  pub fn append_batch(&mut self, batch: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }
 
-    self.append_batch_in(entries)
+    self.append_batch_in(batch)
   }
 
-  fn append_batch_in(&mut self, entries: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
-    let total_encoded_size = entries
+  fn append_batch_in(&mut self, batch: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+    let total_encoded_size = batch
       .iter()
       .map(|ent| ent.data.encoded_size())
-      .fold(entries.len() * FIXED_MANIFEST_ENTRY_SIZE, |acc, val| {
-        acc + val
-      });
+      .fold(batch.len() * FIXED_ENTRY_LEN, |acc, val| acc + val);
 
     macro_rules! encode_batch {
       ($buf:ident) => {{
         let mut cursor = 0;
-        for ent in &entries {
+        for ent in &batch {
           cursor += ent
             .encode::<C>(ent.data.encoded_size(), &mut $buf[cursor..])
             .map_err(Error::data)?;
@@ -515,10 +515,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       encode_batch!(buf);
       file.write_all(&buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self
-          .snapshot
-          .insert_batch(entries)
-          .map_err(Error::snapshot)?;
+        self.snapshot.insert_batch(batch).map_err(Error::snapshot)?;
         if self.opts.sync_on_write {
           file.flush().map_err(Error::io)
         } else {
@@ -532,10 +529,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
       file.write_all(buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self
-          .snapshot
-          .insert_batch(entries)
-          .map_err(Error::snapshot)?;
+        self.snapshot.insert_batch(batch).map_err(Error::snapshot)?;
         if self.opts.sync_on_write {
           file.flush().map_err(Error::io)
         } else {
@@ -598,7 +592,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
             skipped += 1;
           }
 
-          read_cursor += FIXED_MANIFEST_ENTRY_SIZE + len;
+          read_cursor += FIXED_ENTRY_LEN + len;
         }
       }
     }
@@ -616,33 +610,35 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         value: header_buf[0],
       };
       if flag.is_deletion() {
-        read_cursor += FIXED_MANIFEST_ENTRY_SIZE + len;
+        read_cursor += FIXED_ENTRY_LEN + len;
         continue;
       }
 
-      let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
+      let entry_size = FIXED_ENTRY_LEN + len;
 
-      let remaining = self.len - HEADER_SIZE as u64 - read_cursor as u64;
-      let needed = FIXED_MANIFEST_ENTRY_SIZE + len;
+      let remaining = self.len - read_cursor as u64;
+      let needed = FIXED_ENTRY_LEN + len;
       if needed as u64 > remaining {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
 
-      let (readed, ent) = Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + entry_size])
+      let (_readed, ent) = Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + entry_size])
         .map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
       self.snapshot.insert(ent).map_err(Error::snapshot)?;
-      new_mmap[write_cursor..write_cursor + readed]
-        .copy_from_slice(&old_mmap[read_cursor..read_cursor + readed]);
-      read_cursor += readed;
-      write_cursor += readed;
+      new_mmap[write_cursor..write_cursor + needed]
+        .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
+      read_cursor += needed;
+      write_cursor += needed;
     }
 
     new_file.flush().map_err(Error::io)?;
-    new_file.sync_all().map_err(Error::io)?;
     drop(new_mmap);
+    new_file.set_len(write_cursor as u64).map_err(Error::io)?;
+    new_file.sync_all().map_err(Error::io)?;
+
     drop(old_mmap);
     drop(new_file);
     drop(old_file);
@@ -740,21 +736,20 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       header_buf.copy_from_slice(&mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
 
       let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
-      let entry_size = FIXED_MANIFEST_ENTRY_SIZE + len;
-
-      let remaining = size - HEADER_SIZE as u64 - read_cursor as u64;
-      let needed = FIXED_MANIFEST_ENTRY_SIZE + len;
+      let entry_size = FIXED_ENTRY_LEN + len;
+      let remaining = size - read_cursor as u64;
+      let needed = FIXED_ENTRY_LEN + len;
       if needed as u64 > remaining {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
 
-      let (readed, ent) = Entry::decode::<C>(&mmap[read_cursor..read_cursor + entry_size])
-        .map_err(|e| match e {
+      let (_, ent) =
+        Entry::decode::<C>(&mmap[read_cursor..read_cursor + entry_size]).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
       snapshot.insert(ent).map_err(Error::snapshot)?;
-      read_cursor += readed;
+      read_cursor += needed;
     }
 
     drop(mmap);
@@ -798,18 +793,19 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     buf[cur..cur + MAGIC_VERSION_LEN].copy_from_slice(&magic_version.to_le_bytes());
     cur += MAGIC_VERSION_LEN;
     buf[cur..HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
-    bytes.copy_from_slice(&buf);
+    bytes[..HEADER_SIZE].copy_from_slice(&buf);
   }
 }
 
+#[inline]
 fn append<S: Snapshot, C: Checksumer>(
   file: &mut File,
   ent: &Entry<S::Data>,
   sync: bool,
 ) -> Result<usize, Error<S>> {
   let encoded_len = ent.data.encoded_size();
-  if encoded_len + FIXED_MANIFEST_ENTRY_SIZE > MAX_INLINE_SIZE {
-    let mut buf = Vec::with_capacity(encoded_len + FIXED_MANIFEST_ENTRY_SIZE);
+  if encoded_len + FIXED_ENTRY_LEN > MAX_INLINE_SIZE {
+    let mut buf = Vec::with_capacity(encoded_len + FIXED_ENTRY_LEN);
     ent
       .encode::<C>(encoded_len, &mut buf)
       .map_err(Error::data)?;
@@ -826,7 +822,7 @@ fn append<S: Snapshot, C: Checksumer>(
       .map_err(Error::io)
   } else {
     let mut buf = [0; MAX_INLINE_SIZE];
-    let buf = &mut buf[..encoded_len + FIXED_MANIFEST_ENTRY_SIZE];
+    let buf = &mut buf[..encoded_len + FIXED_ENTRY_LEN];
     ent.encode::<C>(encoded_len, buf).map_err(Error::data)?;
     let len = buf.len();
     file

@@ -1,16 +1,7 @@
-// /// [`Snapshot`](crate::append-only::Snapshot) implementors for Wisckey WALs.
-// #[cfg(any(feature = "std", feature = "hashbrown"))]
-// #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
-// pub mod wiscask;
-// /// [`Snapshot`](crate::append-only::Snapshot) implementors for Wisckey WALs based on LSM model.
-// #[cfg(any(feature = "std", feature = "hashbrown"))]
-// #[cfg_attr(docsrs, doc(cfg(any(feature = "std", feature = "hashbrown"))))]
-// pub mod lsm;
-
 use super::*;
 
 /// The entry in the append-only file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Entry<D> {
   pub(super) flag: EntryFlags,
@@ -107,6 +98,12 @@ impl<D> Entry<D> {
   pub const fn data(&self) -> &D {
     &self.data
   }
+
+  /// Into the data.
+  #[inline]
+  pub fn into_data(self) -> D {
+    self.data
+  }
 }
 
 /// Data for the [`Entry`].
@@ -159,7 +156,14 @@ impl<D: Data> Entry<D> {
     cursor += 1;
     buf[cursor..cursor + LEN_BUF_SIZE].copy_from_slice(&(data_encoded_len as u32).to_le_bytes());
     cursor += LEN_BUF_SIZE;
-    let encoded = self.data.encode(&mut buf[cursor..])?;
+    let encoded = self
+      .data
+      .encode(&mut buf[cursor..cursor + data_encoded_len])?;
+    debug_assert_eq!(
+      data_encoded_len, encoded,
+      "invalid data encoded size, expected {} got {}",
+      data_encoded_len, encoded,
+    );
     cursor += encoded;
 
     let cks = C::checksum(&buf[..cursor]).to_le_bytes();
@@ -168,10 +172,10 @@ impl<D: Data> Entry<D> {
 
     debug_assert_eq!(
       cursor,
-      FIXED_MANIFEST_ENTRY_SIZE + data_encoded_len,
+      FIXED_ENTRY_LEN + data_encoded_len,
       "invalid encoded size, expected {} got {}",
       cursor,
-      FIXED_MANIFEST_ENTRY_SIZE + data_encoded_len
+      FIXED_ENTRY_LEN + data_encoded_len
     );
     Ok(cursor)
   }

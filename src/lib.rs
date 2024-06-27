@@ -18,8 +18,8 @@ use std::vec::Vec;
 
 use core::mem;
 
-mod snapshot;
-pub use snapshot::*;
+mod types;
+pub use types::*;
 
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
@@ -40,7 +40,7 @@ const MAGIC_TEXT: &[u8] = b"al8n";
 const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
 const MAGIC_VERSION_LEN: usize = mem::size_of::<u16>();
 const ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE; // flag + len
-const FIXED_MANIFEST_ENTRY_SIZE: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
+const FIXED_ENTRY_LEN: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
 const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
 const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
 
