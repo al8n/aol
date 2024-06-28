@@ -4,6 +4,8 @@ use std::{
   path::PathBuf,
 };
 
+use memmap2::MmapMut;
+
 use super::*;
 
 pub use crate::RewritePolicy;
@@ -316,6 +318,7 @@ enum Memmap {
     file: File,
     mmap: memmap2::MmapMut,
   },
+  None,
 }
 
 impl core::ops::Deref for Memmap {
@@ -326,6 +329,7 @@ impl core::ops::Deref for Memmap {
     match self {
       Self::Map { mmap, .. } => mmap,
       Self::MapMut { mmap, .. } => mmap,
+      Self::None => unreachable!(),
     }
   }
 }
@@ -358,6 +362,7 @@ impl Memmap {
 
         Ok(len + total_encoded_size)
       }
+      Memmap::None => unreachable!(),
     }
   }
 
@@ -383,6 +388,7 @@ impl Memmap {
 
         Ok(len + encoded_len)
       }
+      Memmap::None => unreachable!(),
     }
   }
 
@@ -394,28 +400,26 @@ impl Memmap {
     opts: &Options,
     len: usize,
   ) -> Result<usize, Error<S>> {
-    match self {
-      Memmap::Map { .. } => Err(read_only_error().into()),
+    let old = mem::replace(self, Memmap::None);
+    match old {
+      Memmap::Map { .. } => {
+        *self = old;
+        Err(read_only_error().into())
+      }
       Memmap::MapMut { mmap, file } => {
         let (new_len, this) =
           Self::rewrite_in::<S, C>(mmap, file, filename, rewrite_filename, snapshot, opts, len)?;
-        let Self::MapMut {
-          file: new_file,
-          mmap: new_mmap,
-        } = this
-        else {
-          unreachable!();
-        };
-        *mmap = new_mmap;
-        *file = new_file;
+
+        *self = this;
         Ok(new_len)
       }
+      Memmap::None => unreachable!(),
     }
   }
 
   fn rewrite_in<S: Snapshot, C: Checksumer>(
-    old_mmap: &mut [u8],
-    _old_file: &mut File,
+    old_mmap: MmapMut,
+    old_file: File,
     filename: &PathBuf,
     rewrite_filename: &PathBuf,
     snapshot: &mut S,
@@ -509,10 +513,8 @@ impl Memmap {
     new_file.flush().map_err(Error::io)?;
     new_file.sync_all().map_err(Error::io)?;
 
-    // unsafe {
-    //   core::ptr::drop_in_place(old_mmap);
-    //   core::ptr::drop_in_place(old_file);
-    // }
+    drop(old_mmap);
+    drop(old_file);
     drop(new_mmap);
     drop(new_file);
 
@@ -609,7 +611,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref() {
       Some(Memmap::Map { .. }) => Err(read_only_error()),
       Some(Memmap::MapMut { mmap, .. }) => mmap.flush(),
-      None => Ok(()),
+      _ => Ok(()),
     }
   }
 
@@ -623,7 +625,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref() {
       Some(Memmap::Map { .. }) => Err(read_only_error()),
       Some(Memmap::MapMut { mmap, .. }) => mmap.flush_async(),
-      None => Ok(()),
+      _ => Ok(()),
     }
   }
 
@@ -635,7 +637,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref() {
       Some(Memmap::Map { .. }) => Err(read_only_error()),
       Some(Memmap::MapMut { file, .. }) => file.sync_all(),
-      None => Ok(()),
+      _ => Ok(()),
     }
   }
 
@@ -656,6 +658,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref().unwrap() {
       Memmap::Map { file, .. } => file.lock_exclusive(),
       Memmap::MapMut { file, .. } => file.lock_exclusive(),
+      _ => unreachable!(),
     }
   }
 
@@ -670,6 +673,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref().unwrap() {
       Memmap::Map { file, .. } => file.lock_shared(),
       Memmap::MapMut { file, .. } => file.lock_shared(),
+      _ => unreachable!(),
     }
   }
 
@@ -684,6 +688,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref().unwrap() {
       Memmap::Map { file, .. } => file.try_lock_exclusive(),
       Memmap::MapMut { file, .. } => file.try_lock_exclusive(),
+      _ => unreachable!(),
     }
   }
 
@@ -698,6 +703,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref().unwrap() {
       Memmap::Map { file, .. } => file.try_lock_shared(),
       Memmap::MapMut { file, .. } => file.try_lock_shared(),
+      _ => unreachable!(),
     }
   }
 
@@ -712,6 +718,7 @@ impl<S, C> AppendLog<S, C> {
     match self.file.as_ref().unwrap() {
       Memmap::Map { file, .. } => file.unlock(),
       Memmap::MapMut { file, .. } => file.unlock(),
+      _ => unreachable!(),
     }
   }
 }
