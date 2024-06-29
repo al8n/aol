@@ -76,7 +76,6 @@ impl<S> AppendLog<S> {
 
 impl<S: Snapshot> AppendLog<S> {
   /// Open and replay the append only log.
-  #[cfg(feature = "std")]
   #[inline]
   pub fn open(snapshot_opts: S::Options) -> Result<Self, S::Error> {
     Ok(Self {
