@@ -12,7 +12,7 @@ const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_VERSION_LEN; // magic text + e
 /// The snapshot trait, snapshot may contain some in-memory information about the append-only log.
 pub trait Snapshot: Sized {
   /// The data type.
-  type Data: Data;
+  type Record: Record;
 
   /// The options type used to create a new snapshot.
   type Options;
@@ -29,10 +29,10 @@ pub trait Snapshot: Sized {
   fn new(opts: Self::Options) -> Result<Self, Self::Error>;
 
   /// Insert a new entry.
-  fn insert(&self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
+  fn insert(&self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(&self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error>;
+  fn insert_batch(&self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error>;
 }
 
 /// Errors for append-only file.
@@ -71,7 +71,7 @@ pub enum Error<S: Snapshot> {
 
   /// Encode/decode data error.
   #[cfg_attr(feature = "std", error(transparent))]
-  Data(<S::Data as Data>::Error),
+  Record(<S::Record as Record>::Error),
 
   /// Snapshot error.
   #[cfg_attr(feature = "std", error(transparent))]
@@ -92,7 +92,7 @@ impl<S: Snapshot> core::fmt::Display for Error<S> {
   #[inline]
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
-      Self::Data(err) => err.fmt(f),
+      Self::Record(err) => err.fmt(f),
       Self::Snapshot(err) => err.fmt(f),
       Self::AllocatorError(err) => err.fmt(f),
     }
@@ -109,8 +109,8 @@ impl<S: Snapshot> Error<S> {
 
   /// Create a new `Error` from a data error.
   #[inline]
-  pub const fn data(err: <S::Data as Data>::Error) -> Self {
-    Self::Data(err)
+  pub const fn data(err: <S::Record as Record>::Error) -> Self {
+    Self::Record(err)
   }
 
   /// Create a new `Error` from an unknown append-only event.
@@ -410,12 +410,12 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Append an entry to the append-only file.
   #[inline]
-  pub fn append(&mut self, entry: Entry<S::Data>) -> Result<(), Error<S>> {
+  pub fn append(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
     let id = self.slot.fetch_add(1, Ordering::Acquire);
 
     let data_size = entry.data.encoded_size();
     let k = id.to_le_bytes();
-    let res = self.map.insert_with_value::<<S::Data as Data>::Error>(
+    let res = self.map.insert_with_value::<<S::Record as Record>::Error>(
       (),
       &k,
       (data_size + FIXED_ENTRY_LEN) as u32,
@@ -441,7 +441,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
           .map
           .compare_remove((), &k, Ordering::AcqRel, Ordering::Release);
         match e {
-          Either::Left(e) => Err(Error::Data(e)),
+          Either::Left(e) => Err(Error::Record(e)),
           Either::Right(e) => Err(Error::AllocatorError(e)),
         }
       }
@@ -449,7 +449,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(&mut self, entries: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+  pub fn append_batch(&mut self, entries: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
     let total_encoded_size = entries
       .iter()
       .map(|ent| ent.data.encoded_size())
@@ -467,7 +467,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
     let id = self.slot.fetch_add(1, Ordering::Acquire);
     let k = id.to_le_bytes();
-    let res = self.map.insert_with_value::<<S::Data as Data>::Error>(
+    let res = self.map.insert_with_value::<<S::Record as Record>::Error>(
       (),
       &k,
       total_encoded_size as u32,
@@ -571,7 +571,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
           }
 
           let (readed, ent) =
-            Entry::<S::Data>::decode::<C>(&raw[cursor..]).map_err(|e| match e {
+            Entry::<S::Record>::decode::<C>(&raw[cursor..]).map_err(|e| match e {
               Some(e) => Error::data(e),
               None => Error::ChecksumMismatch,
             })?;

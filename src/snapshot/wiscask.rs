@@ -34,7 +34,7 @@ impl core::fmt::Display for Fid {
   }
 }
 
-impl crate::Data for Fid {
+impl crate::Record for Fid {
   type Error = core::convert::Infallible;
 
   fn encoded_size(&self) -> usize {
@@ -88,11 +88,11 @@ impl Snapshot {
 }
 
 impl crate::Snapshot for Snapshot {
-  type Data = Fid;
+  type Record = Fid;
 
   type Error = core::convert::Infallible;
 
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error> {
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     if entry.flag().is_deletion() {
       self.deletions += 1;
     } else {
@@ -107,7 +107,7 @@ impl crate::Snapshot for Snapshot {
     Ok(())
   }
 
-  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>> {
+  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Record>> {
     self
       .logs
       .into_iter()

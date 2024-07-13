@@ -106,8 +106,8 @@ impl<D> Entry<D> {
   }
 }
 
-/// Data for the [`Entry`].
-pub trait Data: Sized {
+/// Record for the [`Entry`].
+pub trait Record: Sized {
   /// The error type returned by encoding.
   #[cfg(feature = "std")]
   type Error: std::error::Error;
@@ -126,7 +126,7 @@ pub trait Data: Sized {
   fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error>;
 }
 
-impl Data for () {
+impl Record for () {
   type Error = core::convert::Infallible;
 
   #[inline]
@@ -145,9 +145,9 @@ impl Data for () {
   }
 }
 
-impl<D: Data> Entry<D> {
+impl<R: Record> Entry<R> {
   #[inline]
-  pub(super) fn encode<C>(&self, data_encoded_len: usize, buf: &mut [u8]) -> Result<usize, D::Error>
+  pub(super) fn encode<C>(&self, data_encoded_len: usize, buf: &mut [u8]) -> Result<usize, R::Error>
   where
     C: Checksumer,
   {
@@ -182,7 +182,7 @@ impl<D: Data> Entry<D> {
 
   #[cfg(feature = "std")]
   #[inline]
-  pub(super) fn decode<C>(buf: &[u8]) -> Result<(usize, Self), Option<D::Error>>
+  pub(super) fn decode<C>(buf: &[u8]) -> Result<(usize, Self), Option<R::Error>>
   where
     C: Checksumer,
   {
@@ -196,7 +196,7 @@ impl<D: Data> Entry<D> {
     if cks != buf[buf_len - CHECKSUM_SIZE..buf_len] {
       return Err(None);
     }
-    let (read, data) = D::decode(&buf[cursor..cursor + len as usize]).map_err(Some)?;
+    let (read, data) = R::decode(&buf[cursor..cursor + len as usize]).map_err(Some)?;
     debug_assert_eq!(
       read, len as usize,
       "invalid decoded size, expected {} got {}",

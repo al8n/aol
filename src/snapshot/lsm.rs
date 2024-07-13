@@ -80,12 +80,12 @@ impl<D> Snapshot<D> {
   }
 }
 
-impl<D: Data> super::Snapshot for Snapshot<D> {
-  type Data = SnapshotChange<D>;
+impl<R: Record> super::Snapshot for Snapshot<D> {
+  type Record = SnapshotChange<D>;
 
   type Error = Error;
 
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error> {
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     if entry.flag().is_deletion() {
       match self.tables.remove(&entry.data.id) {
         None => Err(Error::TableNotFound(entry.data.id)),
@@ -123,7 +123,7 @@ impl<D: Data> super::Snapshot for Snapshot<D> {
     }
   }
 
-  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>> {
+  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Record>> {
     self.tables.into_iter().map(|(id, table)| Entry {
       data: SnapshotChange {
         id,
@@ -178,8 +178,8 @@ impl<D> SnapshotChange<D> {
   }
 }
 
-impl<D: Data> Data for SnapshotChange<D> {
-  type Error = D::Error;
+impl<R: Record> Record for SnapshotChange<D> {
+  type Error = R::Error;
 
   fn encoded_size(&self) -> usize {
     TABLE_ID_SIZE + LEVEL_SIZE + self.data.encoded_size()

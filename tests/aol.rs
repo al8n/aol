@@ -7,7 +7,7 @@ struct Sample {
   b: u64,
 }
 
-impl aol::Data for Sample {
+impl aol::Record for Sample {
   type Error = core::convert::Infallible;
 
   fn encoded_size(&self) -> usize {
@@ -33,7 +33,7 @@ struct SampleSnapshot {
 }
 
 impl aol::fs::Snapshot for SampleSnapshot {
-  type Data = Sample;
+  type Record = Sample;
 
   type Options = ();
 
@@ -50,7 +50,7 @@ impl aol::fs::Snapshot for SampleSnapshot {
     self.deletions.len() > 100
   }
 
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error> {
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     if entry.flag().is_creation() {
       self.creations.push(entry.into_data());
     } else {
@@ -59,7 +59,7 @@ impl aol::fs::Snapshot for SampleSnapshot {
     Ok(())
   }
 
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error> {
+  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
     for entry in entries {
       self.insert(entry)?;
     }
@@ -74,7 +74,7 @@ impl aol::fs::Snapshot for SampleSnapshot {
 }
 
 impl aol::memmap::Snapshot for SampleSnapshot {
-  type Data = Sample;
+  type Record = Sample;
 
   type Options = ();
 
@@ -91,7 +91,7 @@ impl aol::memmap::Snapshot for SampleSnapshot {
     self.deletions.len() > 100
   }
 
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error> {
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     if entry.flag().is_creation() {
       self.creations.push(entry.into_data());
     } else {
@@ -100,7 +100,7 @@ impl aol::memmap::Snapshot for SampleSnapshot {
     Ok(())
   }
 
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error> {
+  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
     for entry in entries {
       self.insert(entry)?;
     }
@@ -115,41 +115,41 @@ impl aol::memmap::Snapshot for SampleSnapshot {
 }
 
 trait AppendLog {
-  type Data: aol::Data;
+  type Record: aol::Record;
   type Error: std::error::Error;
 
-  fn append(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
+  fn append(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
-  fn append_batch(&mut self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error>;
+  fn append_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error>;
 }
 
 impl<S: aol::fs::Snapshot> AppendLog for aol::fs::AppendLog<S> {
-  type Data = S::Data;
+  type Record = S::Record;
   type Error = aol::fs::Error<S>;
 
-  fn append(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error> {
+  fn append(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     aol::fs::AppendLog::append(self, entry)
   }
 
-  fn append_batch(&mut self, batch: Vec<Entry<Self::Data>>) -> Result<(), Self::Error> {
+  fn append_batch(&mut self, batch: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
     aol::fs::AppendLog::append_batch(self, batch)
   }
 }
 
 impl<S: aol::memmap::Snapshot> AppendLog for aol::memmap::AppendLog<S> {
-  type Data = S::Data;
+  type Record = S::Record;
   type Error = aol::memmap::Error<S>;
 
-  fn append(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error> {
+  fn append(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     aol::memmap::AppendLog::append(self, entry)
   }
 
-  fn append_batch(&mut self, batch: Vec<Entry<Self::Data>>) -> Result<(), Self::Error> {
+  fn append_batch(&mut self, batch: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
     aol::memmap::AppendLog::append_batch(self, batch)
   }
 }
 
-fn basic_write_entry<L: AppendLog<Data = Sample>>(mut l: L) {
+fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L) {
   const N: usize = 5001;
 
   for i in 0..N {

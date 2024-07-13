@@ -56,7 +56,7 @@ pub enum Error<S: Snapshot> {
 
   /// Encode/decode data error.
   #[error(transparent)]
-  Data(<S::Data as Data>::Error),
+  Record(<S::Record as Record>::Error),
 
   /// Snapshot error.
   #[error(transparent)]
@@ -82,8 +82,8 @@ impl<S: Snapshot> Error<S> {
 
   /// Create a new `Error` from a data error.
   #[inline]
-  pub const fn data(err: <S::Data as Data>::Error) -> Self {
-    Self::Data(err)
+  pub const fn data(err: <S::Record as Record>::Error) -> Self {
+    Self::Record(err)
   }
 
   /// Create a new `Error` from an unknown append-only event.
@@ -102,7 +102,7 @@ impl<S: Snapshot> Error<S> {
 /// The snapshot trait, snapshot may contain some in-memory information about the append-only log.
 pub trait Snapshot: Sized {
   /// The data type.
-  type Data: Data;
+  type Record: Record;
 
   /// The options type used to create a new snapshot.
   type Options;
@@ -124,10 +124,10 @@ pub trait Snapshot: Sized {
   fn should_rewrite(&self, size: u64) -> bool;
 
   /// Insert a new entry.
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Data>>) -> Result<(), Self::Error>;
+  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error>;
 
   /// Clear the snapshot.
   fn clear(&mut self) -> Result<(), Self::Error>;
@@ -465,7 +465,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   ///
   /// Returns the position of the entry in the append-only file.
   #[inline]
-  pub fn append(&mut self, entry: Entry<S::Data>) -> Result<(), Error<S>> {
+  pub fn append(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }
@@ -473,7 +473,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     self.append_in(entry)
   }
 
-  fn append_in(&mut self, entry: Entry<S::Data>) -> Result<(), Error<S>> {
+  fn append_in(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
     // unwrap is ok, because this log cannot be used in concurrent environment
     append::<S, C>(self.file.as_mut().unwrap(), &entry, self.opts.sync_on_write).and_then(|len| {
       self.len += len as u64;
@@ -482,7 +482,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(&mut self, batch: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+  pub fn append_batch(&mut self, batch: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }
@@ -490,7 +490,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     self.append_batch_in(batch)
   }
 
-  fn append_batch_in(&mut self, batch: Vec<Entry<S::Data>>) -> Result<(), Error<S>> {
+  fn append_batch_in(&mut self, batch: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
     let total_encoded_size = batch
       .iter()
       .map(|ent| ent.data.encoded_size())
@@ -800,7 +800,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 #[inline]
 fn append<S: Snapshot, C: Checksumer>(
   file: &mut File,
-  ent: &Entry<S::Data>,
+  ent: &Entry<S::Record>,
   sync: bool,
 ) -> Result<usize, Error<S>> {
   let encoded_len = ent.data.encoded_size();
