@@ -123,6 +123,18 @@ pub trait Snapshot: Sized {
   /// `size` is the current size of the append-only log.
   fn should_rewrite(&self, size: u64) -> bool;
 
+  /// Validate the entry, return an error if the entry is invalid.
+  fn validate(&self, entry: &Entry<Self::Record>) -> Result<(), Self::Error>;
+
+  /// Validate the batch of entries, return an error if the batch is invalid.
+  #[inline]
+  fn validate_batch(&self, entries: &[Entry<Self::Record>]) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.validate(entry)?;
+    }
+    Ok(())
+  }
+
   /// Insert a new entry.
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
@@ -466,6 +478,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   /// Returns the position of the entry in the append-only file.
   #[inline]
   pub fn append(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
+    self.snapshot.validate(&entry).map_err(Error::snapshot)?;
+
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }
@@ -483,6 +497,11 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Append a batch of entries to the append-only file.
   pub fn append_batch(&mut self, batch: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
+    self
+      .snapshot
+      .validate_batch(&batch)
+      .map_err(Error::snapshot)?;
+
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
     }

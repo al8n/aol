@@ -50,6 +50,10 @@ impl aol::fs::Snapshot for SampleSnapshot {
     self.deletions.len() > 100
   }
 
+  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Self::Error> {
+    Ok(())
+  }
+
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
     if entry.flag().is_creation() {
       self.creations.push(entry.into_data());
@@ -89,6 +93,10 @@ impl aol::memmap::Snapshot for SampleSnapshot {
 
   fn should_rewrite(&self, _size: usize) -> bool {
     self.deletions.len() > 100
+  }
+
+  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Self::Error> {
+    Ok(())
   }
 
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {

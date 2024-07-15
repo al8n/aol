@@ -28,6 +28,18 @@ pub trait Snapshot: Sized {
   /// Create a new snapshot.
   fn new(opts: Self::Options) -> Result<Self, Self::Error>;
 
+  /// Validate the entry, return an error if the entry is invalid.
+  fn validate(&self, entry: &Entry<Self::Record>) -> Result<(), Self::Error>;
+
+  /// Validate the batch of entries, return an error if the batch is invalid.
+  #[inline]
+  fn validate_batch(&self, entries: &[Entry<Self::Record>]) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.validate(entry)?;
+    }
+    Ok(())
+  }
+
   /// Insert a new entry.
   fn insert(&self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
@@ -411,6 +423,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   /// Append an entry to the append-only file.
   #[inline]
   pub fn append(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
+    self.snapshot.validate(&entry).map_err(Error::snapshot)?;
+
     let id = self.slot.fetch_add(1, Ordering::Acquire);
 
     let data_size = entry.data.encoded_size();
@@ -450,6 +464,11 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Append a batch of entries to the append-only file.
   pub fn append_batch(&mut self, entries: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
+    self
+      .snapshot
+      .validate_batch(&entries)
+      .map_err(Error::snapshot)?;
+
     let total_encoded_size = entries
       .iter()
       .map(|ent| ent.data.encoded_size())

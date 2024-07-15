@@ -42,6 +42,18 @@ pub trait Snapshot: Sized {
   /// Returns the options.
   fn options(&self) -> &Self::Options;
 
+  /// Validate the entry, return an error if the entry is invalid.
+  fn validate(&self, entry: &Entry<Self::Record>) -> Result<(), Self::Error>;
+
+  /// Validate the batch of entries, return an error if the batch is invalid.
+  #[inline]
+  fn validate_batch(&self, entries: &[Entry<Self::Record>]) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.validate(entry)?;
+    }
+    Ok(())
+  }
+
   /// Returns `true` if the snapshot should trigger rewrite.
   ///
   /// `size` is the current size of the append-only log.

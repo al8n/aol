@@ -124,6 +124,18 @@ pub trait Snapshot: Sized {
   /// `remaining` is the remaining size of the append-only log.
   fn should_rewrite(&self, remaining: usize) -> bool;
 
+  /// Validate the entry, return an error if the entry is invalid.
+  fn validate(&self, entry: &Entry<Self::Record>) -> Result<(), Self::Error>;
+
+  /// Validate the batch of entries, return an error if the batch is invalid.
+  #[inline]
+  fn validate_batch(&self, entries: &[Entry<Self::Record>]) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.validate(entry)?;
+    }
+    Ok(())
+  }
+
   /// Insert a new entry.
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
@@ -780,6 +792,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Append an entry to the append-only file.
   pub fn append(&mut self, ent: Entry<S::Record>) -> Result<(), Error<S>> {
+    self.snapshot.validate(&ent).map_err(Error::snapshot)?;
+
     let data_encoded_len = ent.data.encoded_size();
     if data_encoded_len > self.capacity {
       return Err(Error::entry_corrupted(
@@ -816,6 +830,11 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Append a batch of entries to the append-only file.
   pub fn append_batch(&mut self, batch: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
+    self
+      .snapshot
+      .validate_batch(&batch)
+      .map_err(Error::snapshot)?;
+
     let total_encoded_size = batch
       .iter()
       .map(|ent| ent.data.encoded_size())
