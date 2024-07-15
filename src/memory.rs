@@ -66,7 +66,12 @@ pub trait Snapshot: Sized {
   fn insert_batch(
     &mut self,
     entries: impl Iterator<Item = Entry<Self::Record>>,
-  ) -> Result<(), Self::Error>;
+  ) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.insert(entry)?;
+    }
+    Ok(())
+  }
 
   /// Iterate over the entries.
   fn into_iter(self) -> impl Iterator<Item = Entry<Self::Record>>;

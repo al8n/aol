@@ -44,7 +44,12 @@ pub trait Snapshot: Sized {
   fn insert(&self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(&self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error>;
+  fn insert_batch(&self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.insert(entry)?;
+    }
+    Ok(())
+  }
 }
 
 /// Errors for append-only file.

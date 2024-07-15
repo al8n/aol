@@ -140,7 +140,12 @@ pub trait Snapshot: Sized {
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error>;
+  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
+    for entry in entries {
+      self.insert(entry)?;
+    }
+    Ok(())
+  }
 
   /// Clear the snapshot.
   fn clear(&mut self) -> Result<(), Self::Error>;
