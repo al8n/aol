@@ -220,13 +220,9 @@ fn memmap_basic() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("memmap.log");
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
   let l = AppendLog::<SampleSnapshot>::map_mut(&p, Options::new(GB), ()).unwrap();
   basic_write_entry(l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
   let l = AppendLog::<SampleSnapshot>::map(&p, Options::new(GB), ()).unwrap();
 
   assert_eq!(l.snapshot().creations.len(), 10002);
