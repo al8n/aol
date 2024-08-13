@@ -455,3 +455,117 @@ pub enum RewritePolicy {
   /// When using this policy, all entries marked as deletion and the first `usize` creation entries will be removed.
   Skip(usize),
 }
+
+/// A batch of entries.
+pub trait Batch<R> {
+  /// The iterator type which yields references to the entries.
+  type Iter<'a>: Iterator<Item = &'a Entry<R>>
+  where
+    Self: 'a,
+    R: 'a;
+
+  /// The iterator type which yields owned entries.
+  type IntoIter: Iterator<Item = Entry<R>>;
+
+  /// Returns the number of entries in the batch.
+  fn len(&self) -> usize;
+
+  /// Returns `true` if the batch is empty.
+  fn is_empty(&self) -> bool {
+    self.len() == 0
+  }
+
+  /// Returns an iterator which yields references to the entries.
+  fn iter(&self) -> Self::Iter<'_>;
+
+  /// Returns an iterator which yields owned entries.
+  fn into_iter(self) -> Self::IntoIter;
+}
+
+macro_rules! impl_batch_for_vec {
+  ($($ty:ty), +$(,)?) => {
+    $(
+      impl<D> $crate::Batch<D> for $ty {
+        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
+        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
+
+        #[inline]
+        fn len(&self) -> usize {
+          <[Entry<D>]>::len(self)
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+          <[Entry<D>]>::is_empty(self)
+        }
+
+        #[inline]
+        fn iter(&self) -> Self::Iter<'_> {
+          <[Entry<D>]>::iter(self)
+        }
+
+        #[inline]
+        fn into_iter(self) -> Self::IntoIter {
+          ::core::iter::IntoIterator::into_iter(self)
+        }
+      }
+    )*
+  };
+}
+
+impl_batch_for_vec!(::std::vec::Vec<Entry<D>>, ::std::boxed::Box<[Entry<D>]>,);
+
+#[cfg(feature = "smallvec-wrapper")]
+mod sw {
+  use smallvec_wrapper::*;
+
+  use super::Entry;
+
+  impl_batch_for_vec!(
+    OneOrMore<Entry<D>>,
+    TinyVec<Entry<D>>,
+    TriVec<Entry<D>>,
+    SmallVec<Entry<D>>,
+    MediumVec<Entry<D>>,
+    LargeVec<Entry<D>>,
+    XLargeVec<Entry<D>>,
+    XXLargeVec<Entry<D>>,
+    XXXLargeVec<Entry<D>>,
+  );
+}
+
+macro_rules! impl_batch_for_array {
+  ($($ty:ty), +$(,)?) => {
+    $(
+      impl<D, const N: usize> $crate::Batch<D> for $ty {
+        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
+        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
+
+        #[inline]
+        fn len(&self) -> usize {
+          <[Entry<D>]>::len(self)
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+          <[Entry<D>]>::is_empty(self)
+        }
+
+        #[inline]
+        fn iter(&self) -> Self::Iter<'_> {
+          <[Entry<D>]>::iter(self)
+        }
+
+        #[inline]
+        fn into_iter(self) -> Self::IntoIter {
+          ::core::iter::IntoIterator::into_iter(self)
+        }
+      }
+    )*
+  };
+}
+
+impl_batch_for_array!([Entry<D>; N]);
+
+#[cfg(feature = "smallvec")]
+impl_batch_for_array!(::smallvec::SmallVec<[Entry<D>; N]>);

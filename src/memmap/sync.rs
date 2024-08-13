@@ -33,8 +33,8 @@ pub trait Snapshot: Sized {
 
   /// Validate the batch of entries, return an error if the batch is invalid.
   #[inline]
-  fn validate_batch(&self, entries: &[Entry<Self::Record>]) -> Result<(), Self::Error> {
-    for entry in entries {
+  fn validate_batch<B: Batch<Self::Record>>(&self, entries: &B) -> Result<(), Self::Error> {
+    for entry in entries.iter() {
       self.validate(entry)?;
     }
     Ok(())
@@ -44,8 +44,8 @@ pub trait Snapshot: Sized {
   fn insert(&self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(&self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
-    for entry in entries {
+  fn insert_batch<B: Batch<Self::Record>>(&self, entries: B) -> Result<(), Self::Error> {
+    for entry in entries.into_iter() {
       self.insert(entry)?;
     }
     Ok(())

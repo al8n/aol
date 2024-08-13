@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 
-use aol::Entry;
+use aol::{Batch, Entry};
 
 struct Sample {
   a: u64,
@@ -63,8 +63,8 @@ impl aol::fs::Snapshot for SampleSnapshot {
     Ok(())
   }
 
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
-    for entry in entries {
+  fn insert_batch<B: Batch<Self::Record>>(&mut self, entries: B) -> Result<(), Self::Error> {
+    for entry in entries.into_iter() {
       self.insert(entry)?;
     }
     Ok(())
@@ -108,8 +108,8 @@ impl aol::memmap::Snapshot for SampleSnapshot {
     Ok(())
   }
 
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
-    for entry in entries {
+  fn insert_batch<B: Batch<Self::Record>>(&mut self, entries: B) -> Result<(), Self::Error> {
+    for entry in entries.into_iter() {
       self.insert(entry)?;
     }
     Ok(())

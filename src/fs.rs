@@ -128,8 +128,8 @@ pub trait Snapshot: Sized {
 
   /// Validate the batch of entries, return an error if the batch is invalid.
   #[inline]
-  fn validate_batch(&self, entries: &[Entry<Self::Record>]) -> Result<(), Self::Error> {
-    for entry in entries {
+  fn validate_batch<B: Batch<Self::Record>>(&self, entries: &B) -> Result<(), Self::Error> {
+    for entry in entries.iter() {
       self.validate(entry)?;
     }
     Ok(())
@@ -139,8 +139,8 @@ pub trait Snapshot: Sized {
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(&mut self, entries: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
-    for entry in entries {
+  fn insert_batch<B: Batch<Self::Record>>(&mut self, entries: B) -> Result<(), Self::Error> {
+    for entry in entries.into_iter() {
       self.insert(entry)?;
     }
     Ok(())
@@ -501,7 +501,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(&mut self, batch: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
+  pub fn append_batch<B: Batch<S::Record>>(&mut self, batch: B) -> Result<(), Error<S>> {
     self
       .snapshot
       .validate_batch(&batch)
@@ -514,7 +514,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     self.append_batch_in(batch)
   }
 
-  fn append_batch_in(&mut self, batch: Vec<Entry<S::Record>>) -> Result<(), Error<S>> {
+  fn append_batch_in<B: Batch<S::Record>>(&mut self, batch: B) -> Result<(), Error<S>> {
     let total_encoded_size = batch
       .iter()
       .map(|ent| ent.data.encoded_size())
@@ -523,7 +523,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     macro_rules! encode_batch {
       ($buf:ident) => {{
         let mut cursor = 0;
-        for ent in &batch {
+        for ent in batch.iter() {
           cursor += ent
             .encode::<C>(ent.data.encoded_size(), &mut $buf[cursor..])
             .map_err(Error::data)?;
