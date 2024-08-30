@@ -27,6 +27,8 @@ pub use types::*;
 pub mod fs;
 
 /// Append-only log implementation based on memory-mapped files.
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod memmap;
 
 /// In-memory append-only log implementation.
