@@ -13,13 +13,10 @@ extern crate alloc as std;
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(not(feature = "std"))]
-use std::vec::Vec;
-
 use core::mem;
 
-mod snapshot;
-pub use snapshot::*;
+mod types;
+pub use types::*;
 
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
@@ -27,6 +24,8 @@ pub use snapshot::*;
 pub mod fs;
 
 /// Append-only log implementation based on memory-mapped files.
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod memmap;
 
 /// In-memory append-only log implementation.
@@ -36,12 +35,19 @@ pub mod memory;
 const MAGIC_LEN: usize = mem::size_of::<u16>();
 
 /// Magic text for the append only log, this will never be changed.
+#[cfg(feature = "std")]
 const MAGIC_TEXT: &[u8] = b"al8n";
+#[cfg(feature = "std")]
 const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
+#[cfg(feature = "std")]
 const MAGIC_VERSION_LEN: usize = mem::size_of::<u16>();
+#[cfg(feature = "std")]
 const ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE; // flag + len
-const FIXED_MANIFEST_ENTRY_SIZE: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
+#[cfg(feature = "std")]
+const FIXED_ENTRY_LEN: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
+#[cfg(feature = "std")]
 const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
+#[cfg(feature = "std")]
 const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
 
 const DELETE_FLAG: u8 = 0b00000001;
@@ -455,3 +461,117 @@ pub enum RewritePolicy {
   /// When using this policy, all entries marked as deletion and the first `usize` creation entries will be removed.
   Skip(usize),
 }
+
+/// A batch of entries.
+pub trait Batch<R> {
+  /// The iterator type which yields references to the entries.
+  type Iter<'a>: Iterator<Item = &'a Entry<R>>
+  where
+    Self: 'a,
+    R: 'a;
+
+  /// The iterator type which yields owned entries.
+  type IntoIter: Iterator<Item = Entry<R>>;
+
+  /// Returns the number of entries in the batch.
+  fn len(&self) -> usize;
+
+  /// Returns `true` if the batch is empty.
+  fn is_empty(&self) -> bool {
+    self.len() == 0
+  }
+
+  /// Returns an iterator which yields references to the entries.
+  fn iter(&self) -> Self::Iter<'_>;
+
+  /// Returns an iterator which yields owned entries.
+  fn into_iter(self) -> Self::IntoIter;
+}
+
+macro_rules! impl_batch_for_vec {
+  ($($ty:ty), +$(,)?) => {
+    $(
+      impl<D> $crate::Batch<D> for $ty {
+        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
+        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
+
+        #[inline]
+        fn len(&self) -> usize {
+          <[Entry<D>]>::len(self)
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+          <[Entry<D>]>::is_empty(self)
+        }
+
+        #[inline]
+        fn iter(&self) -> Self::Iter<'_> {
+          <[Entry<D>]>::iter(self)
+        }
+
+        #[inline]
+        fn into_iter(self) -> Self::IntoIter {
+          ::core::iter::IntoIterator::into_iter(self)
+        }
+      }
+    )*
+  };
+}
+
+impl_batch_for_vec!(::std::vec::Vec<Entry<D>>, ::std::boxed::Box<[Entry<D>]>,);
+
+#[cfg(feature = "smallvec-wrapper")]
+mod sw {
+  use smallvec_wrapper::*;
+
+  use super::Entry;
+
+  impl_batch_for_vec!(
+    OneOrMore<Entry<D>>,
+    TinyVec<Entry<D>>,
+    TriVec<Entry<D>>,
+    SmallVec<Entry<D>>,
+    MediumVec<Entry<D>>,
+    LargeVec<Entry<D>>,
+    XLargeVec<Entry<D>>,
+    XXLargeVec<Entry<D>>,
+    XXXLargeVec<Entry<D>>,
+  );
+}
+
+macro_rules! impl_batch_for_array {
+  ($($ty:ty), +$(,)?) => {
+    $(
+      impl<D, const N: usize> $crate::Batch<D> for $ty {
+        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
+        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
+
+        #[inline]
+        fn len(&self) -> usize {
+          <[Entry<D>]>::len(self)
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+          <[Entry<D>]>::is_empty(self)
+        }
+
+        #[inline]
+        fn iter(&self) -> Self::Iter<'_> {
+          <[Entry<D>]>::iter(self)
+        }
+
+        #[inline]
+        fn into_iter(self) -> Self::IntoIter {
+          ::core::iter::IntoIterator::into_iter(self)
+        }
+      }
+    )*
+  };
+}
+
+impl_batch_for_array!([Entry<D>; N]);
+
+#[cfg(feature = "smallvec")]
+impl_batch_for_array!(::smallvec::SmallVec<[Entry<D>; N]>);

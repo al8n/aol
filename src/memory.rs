@@ -23,7 +23,7 @@ impl Options {
 /// The snapshot trait, which contains the information about the append-only log.
 pub trait Snapshot: Sized {
   /// The data type.
-  type Data: Data;
+  type Record: Record;
 
   /// The options type used to create a new snapshot.
   type Options: Clone;
@@ -37,10 +37,22 @@ pub trait Snapshot: Sized {
   type Error: core::fmt::Debug + core::fmt::Display;
 
   /// Open a new snapshot.
-  fn open(opts: Self::Options) -> Result<Self, Self::Error>;
+  fn new(opts: Self::Options) -> Result<Self, Self::Error>;
 
   /// Returns the options.
   fn options(&self) -> &Self::Options;
+
+  /// Validate the entry, return an error if the entry is invalid.
+  fn validate(&self, entry: &Entry<Self::Record>) -> Result<(), Self::Error>;
+
+  /// Validate the batch of entries, return an error if the batch is invalid.
+  #[inline]
+  fn validate_batch<B: Batch<Self::Record>>(&self, entries: &B) -> Result<(), Self::Error> {
+    for entry in entries.iter() {
+      self.validate(entry)?;
+    }
+    Ok(())
+  }
 
   /// Returns `true` if the snapshot should trigger rewrite.
   ///
@@ -48,16 +60,18 @@ pub trait Snapshot: Sized {
   fn should_rewrite(&self) -> bool;
 
   /// Insert a new entry.
-  fn insert(&mut self, entry: Entry<Self::Data>) -> Result<(), Self::Error>;
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch(
-    &mut self,
-    entries: impl Iterator<Item = Entry<Self::Data>>,
-  ) -> Result<(), Self::Error>;
+  fn insert_batch<B: Batch<Self::Record>>(&mut self, entries: B) -> Result<(), Self::Error> {
+    for entry in entries.into_iter() {
+      self.insert(entry)?;
+    }
+    Ok(())
+  }
 
   /// Iterate over the entries.
-  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Data>>;
+  fn into_iter(self) -> impl Iterator<Item = Entry<Self::Record>>;
 }
 
 /// In-memory generic append-only log implementation.
@@ -76,25 +90,21 @@ impl<S> AppendLog<S> {
 
 impl<S: Snapshot> AppendLog<S> {
   /// Open and replay the append only log.
-  #[cfg(feature = "std")]
   #[inline]
-  pub fn open(snapshot_opts: S::Options) -> Result<Self, S::Error> {
+  pub fn new(snapshot_opts: S::Options) -> Result<Self, S::Error> {
     Ok(Self {
-      snapshot: S::open(snapshot_opts)?,
+      snapshot: S::new(snapshot_opts)?,
     })
   }
 
   /// Append an entry to the append-only file.
   #[inline]
-  pub fn append(&mut self, ent: Entry<S::Data>) -> Result<(), S::Error> {
+  pub fn append(&mut self, ent: Entry<S::Record>) -> Result<(), S::Error> {
     self.append_in(ent)
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch(
-    &mut self,
-    entries: impl Iterator<Item = Entry<S::Data>>,
-  ) -> Result<(), S::Error> {
+  pub fn append_batch<B: Batch<S::Record>>(&mut self, entries: B) -> Result<(), S::Error> {
     if self.snapshot.should_rewrite() {
       self.rewrite()?;
     }
@@ -103,7 +113,7 @@ impl<S: Snapshot> AppendLog<S> {
   }
 
   #[inline]
-  fn append_in(&mut self, entry: Entry<S::Data>) -> Result<(), S::Error> {
+  fn append_in(&mut self, entry: Entry<S::Record>) -> Result<(), S::Error> {
     if self.snapshot.should_rewrite() {
       self.rewrite()?;
     }
@@ -114,7 +124,7 @@ impl<S: Snapshot> AppendLog<S> {
   #[inline]
   fn rewrite(&mut self) -> Result<(), S::Error> {
     let snapshot_opts = self.snapshot.options().clone();
-    let snapshot = S::open(snapshot_opts)?;
+    let snapshot = S::new(snapshot_opts)?;
     let old = mem::replace(&mut self.snapshot, snapshot);
 
     for ent in old.into_iter() {

@@ -59,21 +59,6 @@ memory map, lockfree ARENA (SkipMap).
     - As this implementation is backed by an ARENA, no allocation required for both read and write.
     - Fast read and write performance, backed by memory map, no extra I/O required.
 
-- `aol::memmap::sync::AppendLog`:
-  
-  Generic append-only log implementation based on lockfree ARENA based [`skl::SkipMap`](https://docs.rs/skl/latest/skl/map/struct.SkipMap.html) (support both in-memory and on-disk).  
-  
-  - It is good for:
-    - Append-only log which size cannot reach `4GB`.
-    - End-users who can manage the grow and rewrite by themselves.
-
-  - Pros:
-    - As this implementation is backed by an ARENA, no allocation required for both read and write.
-    - Fast read and write performance, backed by memory map, no extra I/O required.
-    - Lock-free and concurrent-safe.
-    - Support both in-memory and on-disk.
-    - Can be used in `no_std` environment.
-
 - `aol::ConcurrentAppendLog`:
   
   Generic concurrent wrapper to make non-thread safe append-only log implementation becomes thread safe.

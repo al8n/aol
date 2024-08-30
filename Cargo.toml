@@ -13,8 +13,8 @@ rust-version = "1.56"
 
 [features]
 default = ["std"]
-alloc = ["skl/alloc"]
-std = ["thiserror", "skl/memmap", "memmap2"]
+alloc = []
+std = ["thiserror", "memmap2"]
 filelock = ["std", "fs4"]
 
 [dependencies]
@@ -24,10 +24,15 @@ paste = "1"
 
 fs4 = { version = "0.8", optional = true }
 memmap2 = { version = "0.9", optional = true }
-skl = { version = "0.11", default-features = false, features = ["alloc"], optional = true }
 serde = { version = "1", optional = true, features = ["derive"] }
+smallvec-wrapper = { version = "0.1", optional = true }
+smallvec = { version = "1", optional = true }
 thiserror = { version = "1", optional = true }
 
+[[test]]
+name = "aol"
+path = "tests/aol.rs"
+required-features = ["std"]
 
 [dev-dependencies]
 tempfile = "3"
