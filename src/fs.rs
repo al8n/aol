@@ -307,20 +307,6 @@ impl Options {
 ///   - Manifest file.
 ///   - Write is not too frequently.
 ///
-/// - Compared to [`memmap::sync::AppendLog`](crate::memmap::sync::AppendLog):
-///
-///   - Pros:
-///     - It is growable, do not require pre-allocated.
-///     - Support automatic rewrite.
-///     - No holes in the file.
-///
-///   - Cons:
-///     - Read and write may require extra allocations (if the entry encoded size is larger than `64`) for encoding and decoding.
-///     - Each write requires an I/O system call.
-///     - To use it in concurrent environment, `Mutex` or `RwLock` is required.
-///     - Do not support in-memory mode.
-///     - Cannot be used in `no_std` environment.
-///
 /// - Compared to [`memmap::AppendLog`](crate::memmap::AppendLog):
 ///   
 ///   - Pros:
