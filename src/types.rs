@@ -146,6 +146,7 @@ impl Record for () {
 }
 
 impl<R: Record> Entry<R> {
+  #[cfg(feature = "std")]
   #[inline]
   pub(super) fn encode<C>(&self, data_encoded_len: usize, buf: &mut [u8]) -> Result<usize, R::Error>
   where

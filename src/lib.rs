@@ -13,9 +13,6 @@ extern crate alloc as std;
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(not(feature = "std"))]
-use std::vec::Vec;
-
 use core::mem;
 
 mod types;
@@ -38,12 +35,19 @@ pub mod memory;
 const MAGIC_LEN: usize = mem::size_of::<u16>();
 
 /// Magic text for the append only log, this will never be changed.
+#[cfg(feature = "std")]
 const MAGIC_TEXT: &[u8] = b"al8n";
+#[cfg(feature = "std")]
 const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
+#[cfg(feature = "std")]
 const MAGIC_VERSION_LEN: usize = mem::size_of::<u16>();
+#[cfg(feature = "std")]
 const ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE; // flag + len
+#[cfg(feature = "std")]
 const FIXED_ENTRY_LEN: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
+#[cfg(feature = "std")]
 const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
+#[cfg(feature = "std")]
 const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
 
 const DELETE_FLAG: u8 = 0b00000001;
