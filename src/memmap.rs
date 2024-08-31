@@ -11,7 +11,6 @@ use super::*;
 pub use crate::RewritePolicy;
 
 const CURRENT_VERSION: u16 = 0;
-const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
 
 /// Errors for append-only file.
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
@@ -642,7 +641,7 @@ impl<S, C> AppendLog<S, C> {
   pub fn sync_all(&self) -> io::Result<()> {
     match self.file.as_ref() {
       Some(Memmap::Map { .. }) => Err(read_only_error()),
-      Some(Memmap::MapMut { file, .. }) => file.sync_all(),
+      Some(Memmap::MapMut { file, mmap }) => mmap.flush().and_then(|_| file.sync_all()),
       _ => Ok(()),
     }
   }
@@ -658,7 +657,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::lock_exclusive`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn lock_exclusive(&mut self) -> std::io::Result<()> {
+  pub fn lock_exclusive(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     match self.file.as_ref().unwrap() {
@@ -673,7 +672,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::lock_shared`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn lock_shared(&mut self) -> std::io::Result<()> {
+  pub fn lock_shared(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     match self.file.as_ref().unwrap() {
@@ -688,7 +687,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::try_lock_exclusive`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn try_lock_exclusive(&mut self) -> std::io::Result<()> {
+  pub fn try_lock_exclusive(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     match self.file.as_ref().unwrap() {
@@ -703,7 +702,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::try_lock_shared`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn try_lock_shared(&mut self) -> std::io::Result<()> {
+  pub fn try_lock_shared(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     match self.file.as_ref().unwrap() {
@@ -718,7 +717,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::unlock`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn unlock(&mut self) -> std::io::Result<()> {
+  pub fn unlock(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     match self.file.as_ref().unwrap() {

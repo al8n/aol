@@ -9,7 +9,6 @@ use super::*;
 pub use super::RewritePolicy;
 
 const CURRENT_VERSION: u16 = 0;
-const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
 const MAX_INLINE_SIZE: usize = 64;
 
 /// Errors for append-only file.
@@ -388,7 +387,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::lock_exclusive`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn lock_exclusive(&mut self) -> std::io::Result<()> {
+  pub fn lock_exclusive(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     self.file.as_ref().unwrap().lock_exclusive()
@@ -399,7 +398,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::lock_shared`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn lock_shared(&mut self) -> std::io::Result<()> {
+  pub fn lock_shared(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     self.file.as_ref().unwrap().lock_shared()
@@ -410,7 +409,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::try_lock_exclusive`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn try_lock_exclusive(&mut self) -> std::io::Result<()> {
+  pub fn try_lock_exclusive(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     self.file.as_ref().unwrap().try_lock_exclusive()
@@ -421,7 +420,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::try_lock_shared`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn try_lock_shared(&mut self) -> std::io::Result<()> {
+  pub fn try_lock_shared(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     self.file.as_ref().unwrap().try_lock_shared()
@@ -432,7 +431,7 @@ impl<S, C> AppendLog<S, C> {
   /// See [`fs4::FileExt::unlock`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
-  pub fn unlock(&mut self) -> std::io::Result<()> {
+  pub fn unlock(&self) -> std::io::Result<()> {
     use fs4::FileExt;
 
     self.file.as_ref().unwrap().unlock()
@@ -615,19 +614,19 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       let mut header_buf = [0; ENTRY_HEADER_SIZE];
       header_buf.copy_from_slice(&old_mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
 
-      let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
+      let encoded_data_len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
       let flag = EntryFlags {
         value: header_buf[0],
       };
       if flag.is_deletion() {
-        read_cursor += FIXED_ENTRY_LEN + len;
+        read_cursor += FIXED_ENTRY_LEN + encoded_data_len;
         continue;
       }
 
-      let entry_size = FIXED_ENTRY_LEN + len;
+      let entry_size = FIXED_ENTRY_LEN + encoded_data_len;
 
       let remaining = self.len - read_cursor as u64;
-      let needed = FIXED_ENTRY_LEN + len;
+      let needed = FIXED_ENTRY_LEN + encoded_data_len;
       if needed as u64 > remaining {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
@@ -695,7 +694,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
         _checksumer: core::marker::PhantomData,
         opts,
-        len: size,
+        len: HEADER_SIZE as u64,
       });
     }
 
