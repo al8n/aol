@@ -399,10 +399,10 @@ fn memmap_rewrite() {
 fn memmap_anon_rewrite_policy_skip() {
   use aol::memmap::{AppendLog, Options};
 
-  const GB: usize = 1024 * 1024 * 1024;
+  const MB: usize = 1024 * 1024;
 
   let mut l = AppendLog::<SampleSnapshot>::map_anon(
-    Options::new(GB).with_rewrite_policy(aol::RewritePolicy::Skip(100)),
+    Options::new(MB).with_rewrite_policy(aol::RewritePolicy::Skip(100)),
     (),
   )
   .unwrap();
@@ -415,9 +415,9 @@ fn memmap_anon_rewrite_policy_skip() {
 fn memmap_anon_rewrite() {
   use aol::memmap::{AppendLog, Options};
 
-  const GB: usize = 1024 * 1024 * 1024;
+  const MB: usize = 1024 * 1024;
 
-  let mut l = AppendLog::<SampleSnapshot>::map_anon(Options::new(GB), ()).unwrap();
+  let mut l = AppendLog::<SampleSnapshot>::map_anon(Options::new(MB), ()).unwrap();
   rewrite(&mut l);
 
   assert_eq!(l.snapshot().creations.len(), 175);
