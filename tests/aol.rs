@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 
-use aol::{Batch, Entry};
+use aol::Entry;
 
 struct Sample {
   a: u64,
@@ -97,13 +97,6 @@ impl aol::memmap::Snapshot for SampleSnapshot {
       self.creations.push(entry.into_data());
     } else {
       self.deletions.push(entry.into_data());
-    }
-    Ok(())
-  }
-
-  fn insert_batch<B: Batch<Self::Record>>(&mut self, entries: B) -> Result<(), Self::Error> {
-    for entry in entries.into_iter() {
-      self.insert(entry)?;
     }
     Ok(())
   }
@@ -231,6 +224,7 @@ fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn file_basic() {
   use aol::fs::{AppendLog, Options};
 
@@ -254,6 +248,7 @@ fn file_basic() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn memmap_basic() {
   use aol::memmap::{AppendLog, Options};
 
@@ -274,7 +269,7 @@ fn memmap_basic() {
   l.unlock().unwrap();
 }
 
-fn rewrite<L: AppendLog<Record = Sample>>(mut l: L) {
+fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L) {
   const N: usize = 200;
   for i in 0..N {
     if i % 2 == 1 && i < 50 {
@@ -298,6 +293,7 @@ fn rewrite<L: AppendLog<Record = Sample>>(mut l: L) {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn file_rewrite_policy_skip() {
   use aol::fs::{AppendLog, Options};
 
@@ -305,7 +301,7 @@ fn file_rewrite_policy_skip() {
   let p = dir.path().join("fs_rewrite_policy_skip.log");
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(
+  let mut l = AppendLog::<SampleSnapshot>::open(
     &p,
     (),
     open_opts,
@@ -314,7 +310,7 @@ fn file_rewrite_policy_skip() {
   .unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
-  rewrite(l);
+  rewrite(&mut l);
 
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
@@ -327,6 +323,7 @@ fn file_rewrite_policy_skip() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn file_rewrite() {
   use aol::fs::{AppendLog, Options};
 
@@ -334,10 +331,10 @@ fn file_rewrite() {
   let p = dir.path().join("fs_rewrite.log");
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
+  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
-  rewrite(l);
+  rewrite(&mut l);
 
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
@@ -350,6 +347,7 @@ fn file_rewrite() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn memmap_rewrite_policy_skip() {
   use aol::memmap::{AppendLog, Options};
 
@@ -357,7 +355,7 @@ fn memmap_rewrite_policy_skip() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("memmap_rewrite_policy_skip.log");
-  let l = AppendLog::<SampleSnapshot>::map_mut(
+  let mut l = AppendLog::<SampleSnapshot>::map_mut(
     &p,
     Options::new(GB).with_rewrite_policy(aol::RewritePolicy::Skip(100)),
     (),
@@ -365,7 +363,7 @@ fn memmap_rewrite_policy_skip() {
   .unwrap();
   #[cfg(feature = "filelock")]
   l.lock_exclusive().unwrap();
-  rewrite(l);
+  rewrite(&mut l);
 
   let l = AppendLog::<SampleSnapshot>::map(&p, Options::new(GB), ()).unwrap();
   #[cfg(feature = "filelock")]
@@ -376,6 +374,7 @@ fn memmap_rewrite_policy_skip() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn memmap_rewrite() {
   use aol::memmap::{AppendLog, Options};
 
@@ -383,10 +382,10 @@ fn memmap_rewrite() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("memmap_rewrite.log");
-  let l = AppendLog::<SampleSnapshot>::map_mut(&p, Options::new(GB), ()).unwrap();
+  let mut l = AppendLog::<SampleSnapshot>::map_mut(&p, Options::new(GB), ()).unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
-  rewrite(l);
+  rewrite(&mut l);
 
   let l = AppendLog::<SampleSnapshot>::map(&p, Options::new(GB), ()).unwrap();
   #[cfg(feature = "filelock")]
@@ -394,4 +393,32 @@ fn memmap_rewrite() {
   assert_eq!(l.snapshot().creations.len(), 175);
   #[cfg(feature = "filelock")]
   l.unlock().unwrap();
+}
+
+#[test]
+fn memmap_anon_rewrite_policy_skip() {
+  use aol::memmap::{AppendLog, Options};
+
+  const GB: usize = 1024 * 1024 * 1024;
+
+  let mut l = AppendLog::<SampleSnapshot>::map_anon(
+    Options::new(GB).with_rewrite_policy(aol::RewritePolicy::Skip(100)),
+    (),
+  )
+  .unwrap();
+  rewrite(&mut l);
+
+  assert_eq!(l.snapshot().creations.len(), 75);
+}
+
+#[test]
+fn memmap_anon_rewrite() {
+  use aol::memmap::{AppendLog, Options};
+
+  const GB: usize = 1024 * 1024 * 1024;
+
+  let mut l = AppendLog::<SampleSnapshot>::map_anon(Options::new(GB), ()).unwrap();
+  rewrite(&mut l);
+
+  assert_eq!(l.snapshot().creations.len(), 175);
 }

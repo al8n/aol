@@ -46,7 +46,7 @@ const ENTRY_HEADER_SIZE: usize = 1 + LEN_BUF_SIZE; // flag + len
 #[cfg(feature = "std")]
 const FIXED_ENTRY_LEN: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len + checksum
 #[cfg(feature = "std")]
-const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
+const CHECKSUM_SIZE: usize = mem::size_of::<u64>();
 #[cfg(feature = "std")]
 const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
 #[cfg(feature = "std")]
@@ -434,7 +434,7 @@ impl EntryFlags {
 /// Checksumer trait.
 pub trait Checksumer {
   /// Calculate the checksum of the buffer.
-  fn checksum(buf: &[u8]) -> u32;
+  fn checksum(buf: &[u8]) -> u64;
 }
 
 /// CRC32 checksumer.
@@ -443,8 +443,8 @@ pub struct Crc32;
 
 impl Checksumer for Crc32 {
   #[inline]
-  fn checksum(buf: &[u8]) -> u32 {
-    crc32fast::hash(buf)
+  fn checksum(buf: &[u8]) -> u64 {
+    crc32fast::hash(buf) as u64
   }
 }
 
