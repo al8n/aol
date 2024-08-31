@@ -1,13 +1,13 @@
 [package]
 name = "aol"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/al8n/aol"
 homepage = "https://github.com/al8n/aol"
 documentation = "https://docs.rs/aol"
 description = "Generic purpose append only log implementation."
 license = "MIT OR Apache-2.0"
-categories = ["data-structures", "database-implementations", "development-tools", "filesystem", "concurrency"]
+categories = ["data-structures", "database-implementations", "development-tools", "filesystem"]
 keywords = ["log", "append-only", "append-only-log", "database", "manifest"]
 rust-version = "1.56"
 
