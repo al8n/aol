@@ -374,7 +374,7 @@ impl<S, C> AppendLog<S, C> {
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn lock_exclusive(&self) -> std::io::Result<()> {
-    use fs4::FileExt;
+    use fs4::fs_std::FileExt;
 
     self.file.as_ref().unwrap().lock_exclusive()
   }
@@ -385,7 +385,7 @@ impl<S, C> AppendLog<S, C> {
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn lock_shared(&self) -> std::io::Result<()> {
-    use fs4::FileExt;
+    use fs4::fs_std::FileExt;
 
     self.file.as_ref().unwrap().lock_shared()
   }
@@ -396,7 +396,7 @@ impl<S, C> AppendLog<S, C> {
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn try_lock_exclusive(&self) -> std::io::Result<()> {
-    use fs4::FileExt;
+    use fs4::fs_std::FileExt;
 
     self.file.as_ref().unwrap().try_lock_exclusive()
   }
@@ -407,7 +407,7 @@ impl<S, C> AppendLog<S, C> {
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn try_lock_shared(&self) -> std::io::Result<()> {
-    use fs4::FileExt;
+    use fs4::fs_std::FileExt;
 
     self.file.as_ref().unwrap().try_lock_shared()
   }
@@ -418,7 +418,7 @@ impl<S, C> AppendLog<S, C> {
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn unlock(&self) -> std::io::Result<()> {
-    use fs4::FileExt;
+    use fs4::fs_std::FileExt;
 
     self.file.as_ref().unwrap().unlock()
   }
