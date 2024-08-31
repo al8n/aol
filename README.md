@@ -56,18 +56,6 @@ This crate provides generic purpose append-only log implementation, there are tw
     - As this implementation is backed by an ARENA, no allocation required for both read and write.
     - Fast read and write performance, backed by memory map, no extra I/O required.
 
-- `aol::ConcurrentAppendLog`:
-  
-  Generic concurrent wrapper to make non-thread safe append-only log implementation becomes thread safe.
-
-- `aol::AsyncConcurrentAppendLog`:
-
-  Async runtime agnostic concurrent wrapper to make non-thread safe append-only log implementation becomes thread safe.
-
-- `aol::TokioConcurrentAppendLog`:
-
-  Async conccurrent wrapper to make non-thread safe append-only log implementation becomes thread safe for `tokio` runtime.
-
 ### File Structure
 
 ```text
