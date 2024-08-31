@@ -314,20 +314,6 @@ impl Options {
 ///   - Cons:
 ///     - Read and write may require extra allocations (if the entry encoded size is larger than `64`) for encoding and decoding.
 ///     - Each write requires an I/O system call.
-///
-// File structure:
-//
-// ```text
-// +----------------------+--------------------------+-----------------------+
-// | magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// | ...                  | ...                      | ...                   | ...                   | ...                   |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// ```
 #[derive(Debug)]
 pub struct AppendLog<S, C = Crc32> {
   opts: Options,

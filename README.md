@@ -1,5 +1,3 @@
-> WIP: this crate has not been tested yet, still in actively development.
-
 <div align="center">
 <h1>Append Only Log</h1>
 </div>
@@ -28,8 +26,7 @@ English | [简体中文][zh-cn-url]
 When developing infrastructure softwares, write-ahead log or append-only log plays an important role, and people re-implement same
 funcationalities multiple times, but actually, the core for append-only log is just atomic `append`, `append_batch`, `replay`, and `rewrite`.
 
-This crate provides generic purpose append-only log implementation, there are three kinds of implementations based on `std::fs::File`,
-memory map, lockfree ARENA (SkipMap).
+This crate provides generic purpose append-only log implementation, there are two kinds of implementations based on `std::fs::File` and memory map.
 
 - `aol::fs::AppendLog`:
 
@@ -59,23 +56,25 @@ memory map, lockfree ARENA (SkipMap).
     - As this implementation is backed by an ARENA, no allocation required for both read and write.
     - Fast read and write performance, backed by memory map, no extra I/O required.
 
-- `aol::ConcurrentAppendLog`:
-  
-  Generic concurrent wrapper to make non-thread safe append-only log implementation becomes thread safe.
+### File Structure
 
-- `aol::AsyncConcurrentAppendLog`:
-
-  Async runtime agnostic concurrent wrapper to make non-thread safe append-only log implementation becomes thread safe.
-
-- `aol::TokioConcurrentAppendLog`:
-
-  Async conccurrent wrapper to make non-thread safe append-only log implementation becomes thread safe for `tokio` runtime.
+```text
++----------------------+--------------------------+-----------------------+
+| magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
++----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+| op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (N bytes)        | checksum (8 bytes)    |
++----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+| op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (N bytes)        | checksum (8 bytes)    |
++----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+| ...                  | ...                      | ...                   | ...                   | ...                   |
++----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
+```
 
 ## Installation
 
 ```toml
 [dependencies]
-aol = "0.0.1"
+aol = "0.1"
 ```
 
 #### License

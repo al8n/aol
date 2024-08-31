@@ -334,6 +334,7 @@ enum Memmap {
     file: File,
     mmap: memmap2::MmapMut,
   },
+  MapAnon(memmap2::MmapMut),
   None,
 }
 
@@ -345,6 +346,7 @@ impl core::ops::Deref for Memmap {
     match self {
       Self::Map { mmap, .. } => mmap,
       Self::MapMut { mmap, .. } => mmap,
+      Self::MapAnon(mmap) => mmap,
       Self::None => unreachable!(),
     }
   }
@@ -359,7 +361,7 @@ impl Memmap {
   ) -> Result<usize, Error<S>> {
     match self {
       Memmap::Map { .. } => Err(read_only_error().into()),
-      Memmap::MapMut { mmap, .. } => {
+      Memmap::MapMut { mmap, .. } | Memmap::MapAnon(mmap) => {
         if total_encoded_size > mmap.len() {
           return Err(Error::entry_corrupted(total_encoded_size, mmap.len()));
         }
@@ -390,7 +392,7 @@ impl Memmap {
   ) -> Result<usize, Error<S>> {
     match self {
       Memmap::Map { .. } => Err(read_only_error().into()),
-      Memmap::MapMut { mmap, .. } => {
+      Memmap::MapMut { mmap, .. } | Memmap::MapAnon(mmap) => {
         let encoded_len = data_encoded_len + FIXED_ENTRY_LEN;
 
         if encoded_len > mmap.len() - len {
@@ -410,8 +412,8 @@ impl Memmap {
 
   fn rewrite<S: Snapshot, C: Checksumer>(
     &mut self,
-    filename: &PathBuf,
-    rewrite_filename: &PathBuf,
+    filename: Option<&PathBuf>,
+    rewrite_filename: Option<&PathBuf>,
     snapshot: &mut S,
     opts: &Options,
     len: usize,
@@ -423,8 +425,22 @@ impl Memmap {
         Err(read_only_error().into())
       }
       Memmap::MapMut { mmap, file } => {
+        let (new_len, this) = Self::rewrite_in::<S, C>(
+          mmap,
+          Some(file),
+          filename,
+          rewrite_filename,
+          snapshot,
+          opts,
+          len,
+        )?;
+
+        *self = this;
+        Ok(new_len)
+      }
+      Memmap::MapAnon(mmap) => {
         let (new_len, this) =
-          Self::rewrite_in::<S, C>(mmap, file, filename, rewrite_filename, snapshot, opts, len)?;
+          Self::rewrite_in::<S, C>(mmap, None, filename, rewrite_filename, snapshot, opts, len)?;
 
         *self = this;
         Ok(new_len)
@@ -435,26 +451,36 @@ impl Memmap {
 
   fn rewrite_in<S: Snapshot, C: Checksumer>(
     old_mmap: MmapMut,
-    old_file: File,
-    filename: &PathBuf,
-    rewrite_filename: &PathBuf,
+    old_file: Option<File>,
+    filename: Option<&PathBuf>,
+    rewrite_filename: Option<&PathBuf>,
     snapshot: &mut S,
     opts: &Options,
     len: usize,
   ) -> Result<(usize, Self), Error<S>> {
     snapshot.clear().map_err(Error::snapshot)?;
 
-    let mut new_file = OpenOptions::new()
-      .create(true)
-      .read(true)
-      .write(true)
-      .truncate(true)
-      .open(rewrite_filename)
-      .map_err(Error::io)?;
-    new_file.set_len(opts.capacity as u64)?;
+    let new_file = if let Some(rewrite_filename) = rewrite_filename {
+      let f = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(rewrite_filename)
+        .map_err(Error::io)?;
+
+      f.set_len(opts.capacity as u64)?;
+      Some(f)
+    } else {
+      None
+    };
 
     // create memory map for fast read and write
-    let mut new_mmap = unsafe { memmap2::MmapMut::map_mut(&new_file).map_err(Error::io)? };
+    let mut new_mmap = if let Some(ref f) = new_file {
+      unsafe { memmap2::MmapMut::map_mut(f).map_err(Error::io)? }
+    } else {
+      memmap2::MmapMut::map_anon(opts.capacity).map_err(Error::io)?
+    };
 
     write_header_to_slice(&mut new_mmap, opts.magic_version);
 
@@ -526,29 +552,41 @@ impl Memmap {
       write_cursor += needed;
     }
 
-    new_file.flush().map_err(Error::io)?;
-    new_file.sync_all().map_err(Error::io)?;
-
     drop(old_mmap);
     drop(old_file);
-    drop(new_mmap);
-    drop(new_file);
 
-    std::fs::rename(rewrite_filename, filename).map_err(Error::io)?;
+    if let Some(mut new_file) = new_file {
+      new_file.flush().map_err(Error::io)?;
+      new_file.sync_all().map_err(Error::io)?;
+      drop(new_mmap);
+      drop(new_file);
+    } else {
+      drop(new_mmap);
+    }
 
-    let file = OpenOptions::new()
-      .create(false)
-      .read(true)
-      .append(true)
-      .open(filename)
-      .map_err(Error::io)?;
+    match (filename, rewrite_filename) {
+      (Some(filename), Some(rewrite_filename)) => {
+        std::fs::rename(rewrite_filename, filename).map_err(Error::io)?;
+        let file = OpenOptions::new()
+          .create(false)
+          .read(true)
+          .append(true)
+          .open(filename)
+          .map_err(Error::io)?;
 
-    let this = Memmap::MapMut {
-      mmap: unsafe { memmap2::MmapMut::map_mut(&file).map_err(Error::io)? },
-      file,
-    };
+        let this = Memmap::MapMut {
+          mmap: unsafe { memmap2::MmapMut::map_mut(&file).map_err(Error::io)? },
+          file,
+        };
 
-    Ok((write_cursor, this))
+        Ok((write_cursor, this))
+      }
+      (None, None) => {
+        let this = Memmap::MapAnon(memmap2::MmapMut::map_anon(opts.capacity).map_err(Error::io)?);
+        Ok((write_cursor, this))
+      }
+      _ => unreachable!(),
+    }
   }
 }
 
@@ -566,25 +604,11 @@ impl Memmap {
 ///
 ///   - Cons:
 ///     - Pre-allocated is required, automatic grow is not supported.
-///
-// File structure:
-//
-// ```text
-// +----------------------+--------------------------+-----------------------+
-// | magic text (4 bytes) | external magic (2 bytes) | magic (2 bytes)       |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// | op (1 bit)           | custom flag (7 bits)     | len (4 bytes)         | data (n bytes)        | checksum (4 bytes)    |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// | ...                  | ...                      | ...                   | ...                   | ...                   |
-// +----------------------+--------------------------+-----------------------+-----------------------+-----------------------+
-// ```
 #[derive(Debug)]
 pub struct AppendLog<S, C = Crc32> {
   opts: Options,
-  filename: PathBuf,
-  rewrite_filename: PathBuf,
+  filename: Option<PathBuf>,
+  rewrite_filename: Option<PathBuf>,
   file: Option<Memmap>,
   snapshot: S,
   len: usize,
@@ -648,8 +672,8 @@ impl<S, C> AppendLog<S, C> {
 
   /// Returns the path to the append-only file.
   #[inline]
-  pub fn path(&self) -> &std::path::Path {
-    &self.filename
+  pub fn path(&self) -> Option<&std::path::Path> {
+    self.filename.as_deref()
   }
 
   /// Lock the append-only log in exlusive mode.
@@ -729,6 +753,24 @@ impl<S, C> AppendLog<S, C> {
 }
 
 impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+  /// Open a new append-only log backed by anonymous memory map with the given options.
+  #[inline]
+  pub fn map_anon(opts: Options, snapshot_opts: S::Options) -> Result<Self, Error<S>> {
+    let mut mmap = memmap2::MmapMut::map_anon(opts.capacity)?;
+    write_header_to_slice(&mut mmap, opts.magic_version);
+
+    Ok(Self {
+      filename: None,
+      rewrite_filename: None,
+      file: Some(Memmap::MapAnon(mmap)),
+      capacity: opts.capacity,
+      len: HEADER_SIZE,
+      snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
+      _checksumer: core::marker::PhantomData,
+      opts,
+    })
+  }
+
   /// Open and replay the append only log.
   #[inline]
   pub fn map_mut<P: AsRef<std::path::Path>>(
@@ -800,8 +842,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     {
       self.len = Memmap::rewrite::<S, C>(
         self.file.as_mut().unwrap(),
-        &self.filename,
-        &self.rewrite_filename,
+        self.filename.as_ref(),
+        self.rewrite_filename.as_ref(),
         &mut self.snapshot,
         &self.opts,
         self.len,
@@ -845,8 +887,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     {
       self.len = Memmap::rewrite::<S, C>(
         self.file.as_mut().unwrap(),
-        &self.filename,
-        &self.rewrite_filename,
+        self.filename.as_ref(),
+        self.rewrite_filename.as_ref(),
         &mut self.snapshot,
         &self.opts,
         self.len,
@@ -876,8 +918,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   pub fn rewrite(&mut self) -> Result<(), Error<S>> {
     self.len = Memmap::rewrite::<S, C>(
       self.file.as_mut().unwrap(),
-      &self.filename,
-      &self.rewrite_filename,
+      self.filename.as_ref(),
+      self.rewrite_filename.as_ref(),
       &mut self.snapshot,
       &self.opts,
       self.len,
@@ -907,8 +949,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       write_header_to_slice(&mut mmap, magic_version);
 
       return Ok(Self {
-        filename,
-        rewrite_filename,
+        filename: Some(filename),
+        rewrite_filename: Some(rewrite_filename),
         file: Some(Memmap::MapMut { file, mmap }),
         capacity: opts.capacity,
         len: size.max(HEADER_SIZE),
@@ -997,8 +1039,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     }
 
     let mut this = Self {
-      filename,
-      rewrite_filename,
+      filename: Some(filename),
+      rewrite_filename: Some(rewrite_filename),
       file: Some(mmap),
       snapshot,
       capacity: if read_only { size } else { opts.capacity },
@@ -1009,8 +1051,8 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
     if !read_only && this.snapshot.should_rewrite(size) && this.opts.rewrite_on_open {
       this.len = this.file.as_mut().unwrap().rewrite::<S, C>(
-        &this.filename,
-        &this.rewrite_filename,
+        this.filename.as_ref(),
+        this.rewrite_filename.as_ref(),
         &mut this.snapshot,
         &this.opts,
         this.len,
