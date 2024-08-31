@@ -1074,8 +1074,3 @@ fn write_header_to_slice(bytes: &mut [u8], magic_version: u16) {
   buf[cur..HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
   bytes[..HEADER_SIZE].copy_from_slice(&buf);
 }
-
-#[inline]
-fn read_only_error() -> io::Error {
-  io::Error::new(io::ErrorKind::PermissionDenied, "append log read-only")
-}

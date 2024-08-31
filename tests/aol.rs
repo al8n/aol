@@ -230,16 +230,14 @@ fn file_basic() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs.log");
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
+  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
   #[cfg(feature = "filelock")]
   l.lock_exclusive().unwrap();
   basic_write_entry(l);
 
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
+  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
   #[cfg(feature = "filelock")]
   l.lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 10002);
@@ -299,12 +297,9 @@ fn file_rewrite_policy_skip() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite_policy_skip.log");
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
   let mut l = AppendLog::<SampleSnapshot>::open(
     &p,
     (),
-    open_opts,
     Options::new().with_rewrite_policy(aol::RewritePolicy::Skip(100)),
   )
   .unwrap();
@@ -312,9 +307,8 @@ fn file_rewrite_policy_skip() {
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true);
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
+  let mut l =
+    AppendLog::<SampleSnapshot>::open(&p, (), Options::new().with_read_only(true)).unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 75);
@@ -330,16 +324,13 @@ fn file_rewrite() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite.log");
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
+  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), open_opts, Options::new()).unwrap();
+  let mut l =
+    AppendLog::<SampleSnapshot>::open(&p, (), Options::new().with_read_only(true)).unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 175);

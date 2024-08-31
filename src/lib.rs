@@ -577,3 +577,9 @@ impl_batch_for_array!([Entry<D>; N]);
 
 #[cfg(feature = "smallvec")]
 impl_batch_for_array!(::smallvec::SmallVec<[Entry<D>; N]>);
+
+#[cfg(feature = "std")]
+#[inline]
+fn read_only_error() -> std::io::Error {
+  std::io::Error::new(std::io::ErrorKind::PermissionDenied, "append log read-only")
+}

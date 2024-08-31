@@ -156,6 +156,7 @@ pub struct Options {
   magic_version: u16,
   sync_on_write: bool,
   rewrite_policy: RewritePolicy,
+  read_only: bool,
 }
 
 impl Default for Options {
@@ -190,6 +191,7 @@ impl Options {
       magic_version: 0,
       sync_on_write: true,
       rewrite_policy: RewritePolicy::All,
+      read_only: false,
     }
   }
 
@@ -207,6 +209,24 @@ impl Options {
   #[inline]
   pub const fn magic_version(&self) -> u16 {
     self.magic_version
+  }
+
+  /// Get whether the append-only log is read-only.
+  ///
+  /// Default is `false`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::fs::Options;
+  ///
+  /// let opts = Options::new();
+  ///
+  /// assert_eq!(opts.read_only(), false);
+  /// ```
+  #[inline]
+  pub const fn read_only(&self) -> bool {
+    self.read_only
   }
 
   /// Get whether flush the data to disk after write.
@@ -259,6 +279,25 @@ impl Options {
   #[inline]
   pub const fn with_magic_version(mut self, magic_version: u16) -> Self {
     self.magic_version = magic_version;
+    self
+  }
+
+  /// Set whether the append-only log is read-only.
+  ///
+  /// Default is `false`.
+  ///
+  /// # Example
+  ///
+  /// ```rust
+  /// use aol::fs::Options;
+  ///
+  /// let opts = Options::new().with_read_only(true);
+  ///
+  /// assert_eq!(opts.read_only(), true);
+  /// ```
+  #[inline]
+  pub const fn with_read_only(mut self, read_only: bool) -> Self {
+    self.read_only = read_only;
     self
   }
 
@@ -431,14 +470,18 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   pub fn open<P: AsRef<std::path::Path>>(
     path: P,
     snapshot_opts: S::Options,
-    file_opts: OpenOptions,
     opts: Options,
   ) -> Result<Self, Error<S>> {
     let existing = path.as_ref().exists();
     let path = path.as_ref();
     let mut rewrite_path = path.to_path_buf();
     rewrite_path.set_extension("rewrite");
-    let file = file_opts.open(path).map_err(Error::io)?;
+    let file = OpenOptions::new()
+      .append(true)
+      .create(true)
+      .read(true)
+      .open(path)
+      .map_err(Error::io)?;
     Self::open_in(
       path.to_path_buf(),
       rewrite_path,
@@ -464,6 +507,10 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
   }
 
   fn append_in(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
+    if self.opts.read_only {
+      return Err(read_only_error().into());
+    }
+
     // unwrap is ok, because this log cannot be used in concurrent environment
     append::<S, C>(self.file.as_mut().unwrap(), &entry, self.opts.sync_on_write).and_then(|len| {
       self.len += len as u64;
@@ -473,6 +520,10 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Append a batch of entries to the append-only file.
   pub fn append_batch<B: Batch<S::Record>>(&mut self, batch: B) -> Result<(), Error<S>> {
+    if self.opts.read_only {
+      return Err(read_only_error().into());
+    }
+
     self
       .snapshot
       .validate_batch(&batch)
@@ -536,6 +587,10 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   /// Rewrite the append-only log.
   pub fn rewrite(&mut self) -> Result<(), Error<S>> {
+    if self.opts.read_only {
+      return Err(read_only_error().into());
+    }
+
     self.snapshot.clear().map_err(Error::snapshot)?;
 
     let old_file = self.file.take().unwrap();
