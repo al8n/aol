@@ -49,6 +49,8 @@ const FIXED_ENTRY_LEN: usize = ENTRY_HEADER_SIZE + CHECKSUM_SIZE; // flag + len 
 const CHECKSUM_SIZE: usize = mem::size_of::<u32>();
 #[cfg(feature = "std")]
 const LEN_BUF_SIZE: usize = mem::size_of::<u32>();
+#[cfg(feature = "std")]
+const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
 
 const DELETE_FLAG: u8 = 0b00000001;
 const MASK: u8 = 0b11111110;

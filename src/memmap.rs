@@ -11,7 +11,6 @@ use super::*;
 pub use crate::RewritePolicy;
 
 const CURRENT_VERSION: u16 = 0;
-const HEADER_SIZE: usize = MAGIC_TEXT_LEN + MAGIC_LEN + MAGIC_VERSION_LEN; // magic text + external magic + magic
 
 /// Errors for append-only file.
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
@@ -642,7 +641,7 @@ impl<S, C> AppendLog<S, C> {
   pub fn sync_all(&self) -> io::Result<()> {
     match self.file.as_ref() {
       Some(Memmap::Map { .. }) => Err(read_only_error()),
-      Some(Memmap::MapMut { file, .. }) => file.sync_all(),
+      Some(Memmap::MapMut { file, mmap }) => mmap.flush().and_then(|_| file.sync_all()),
       _ => Ok(()),
     }
   }
