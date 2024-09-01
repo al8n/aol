@@ -18,6 +18,8 @@ use core::mem;
 mod types;
 pub use types::*;
 
+pub use dbutils::Checksumer;
+
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
@@ -429,12 +431,6 @@ impl EntryFlags {
       value: flag.bits() & MASK,
     }
   }
-}
-
-/// Checksumer trait.
-pub trait Checksumer {
-  /// Calculate the checksum of the buffer.
-  fn checksum(buf: &[u8]) -> u64;
 }
 
 /// CRC32 checksumer.
