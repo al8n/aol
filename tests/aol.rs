@@ -4,26 +4,30 @@ use aol::Entry;
 
 struct Sample {
   a: u64,
-  b: u64,
+  data: Vec<u8>,
 }
 
 impl aol::Record for Sample {
   type Error = core::convert::Infallible;
 
   fn encoded_size(&self) -> usize {
-    16
+    8 + 4 + self.data.len()
   }
 
   fn encode(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
     buf[..8].copy_from_slice(&self.a.to_le_bytes());
-    buf[8..].copy_from_slice(&self.b.to_le_bytes());
-    Ok(16)
+
+    let len = self.data.len() as u32;
+    buf[8..12].copy_from_slice(&len.to_le_bytes());
+    buf[12..12 + len as usize].copy_from_slice(&self.data);
+    Ok(12 + len as usize)
   }
 
   fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error> {
     let a = u64::from_le_bytes(buf[..8].try_into().unwrap());
-    let b = u64::from_le_bytes(buf[8..].try_into().unwrap());
-    Ok((16, Self { a, b }))
+    let len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    let data = buf[12..12 + len as usize].to_vec();
+    Ok((12 + len as usize, Self { a, data }))
   }
 }
 
@@ -190,14 +194,14 @@ fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L) {
     if i % 3 == 0 {
       l.append(Entry::creation(Sample {
         a: i as u64,
-        b: i as u64,
+        data: Vec::new(),
       }))
       .unwrap();
       l.flush_async().unwrap();
     } else if i % 3 == 1 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        b: i as u64,
+        data: Vec::new(),
       }))
       .unwrap();
       l.flush().unwrap();
@@ -207,12 +211,12 @@ fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L) {
         if j % 2 == 0 {
           batch.push(Entry::creation(Sample {
             a: i as u64,
-            b: j as u64,
+            data: Vec::new(),
           }));
         } else {
           batch.push(Entry::deletion(Sample {
             a: i as u64,
-            b: j as u64,
+            data: Vec::new(),
           }));
         }
       }
@@ -247,6 +251,67 @@ fn file_basic() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn file_write_large_entry() {
+  use aol::fs::{AppendLog, Options};
+
+  let dir = tempfile::tempdir().unwrap();
+  let p = dir.path().join("fs_write_large.log");
+  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  #[cfg(feature = "filelock")]
+  l.lock_exclusive().unwrap();
+
+  const N: usize = 50;
+
+  for i in 0..N {
+    if i % 3 == 0 {
+      l.append(Entry::creation(Sample {
+        a: i as u64,
+        data: vec![0; 128],
+      }))
+      .unwrap();
+      l.flush_async().unwrap();
+    } else if i % 3 == 1 {
+      l.append(Entry::deletion(Sample {
+        a: i as u64,
+        data: vec![0; 128],
+      }))
+      .unwrap();
+      l.flush().unwrap();
+    } else {
+      let mut batch = Vec::with_capacity(10);
+      for j in 0..10 {
+        if j % 2 == 0 {
+          batch.push(Entry::creation(Sample {
+            a: i as u64,
+            data: vec![0; 128],
+          }));
+        } else {
+          batch.push(Entry::deletion(Sample {
+            a: i as u64,
+            data: vec![0; 128],
+          }));
+        }
+      }
+
+      l.append_batch(batch).unwrap();
+      l.sync_all().unwrap();
+    }
+  }
+
+  drop(l);
+
+  let mut open_opts = OpenOptions::new();
+  open_opts.read(true).create(true).append(true);
+  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  #[cfg(feature = "filelock")]
+  l.lock_shared().unwrap();
+  assert_eq!(l.snapshot().creations.len(), 97);
+  #[cfg(feature = "filelock")]
+  l.unlock().unwrap();
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn memmap_basic() {
   use aol::memmap::{AppendLog, Options};
 
@@ -273,7 +338,7 @@ fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L) {
     if i % 2 == 1 && i < 50 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        b: i as u64,
+        data: Vec::new(),
       }))
       .unwrap();
       continue;
@@ -281,7 +346,7 @@ fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L) {
 
     l.append(Entry::creation(Sample {
       a: i as u64,
-      b: i as u64,
+      data: Vec::new(),
     }))
     .unwrap();
     l.flush_async().unwrap();

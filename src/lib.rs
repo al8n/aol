@@ -18,7 +18,7 @@ use core::mem;
 mod types;
 pub use types::*;
 
-pub use dbutils::Checksumer;
+pub use dbutils::*;
 
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
@@ -430,17 +430,6 @@ impl EntryFlags {
     Self {
       value: flag.bits() & MASK,
     }
-  }
-}
-
-/// CRC32 checksumer.
-#[derive(Default, Debug, Copy, Clone)]
-pub struct Crc32;
-
-impl Checksumer for Crc32 {
-  #[inline]
-  fn checksum(buf: &[u8]) -> u64 {
-    crc32fast::hash(buf) as u64
   }
 }
 

@@ -361,7 +361,7 @@ pub struct AppendLog<S, C = Crc32> {
   file: Option<File>,
   len: u64,
   snapshot: S,
-  _checksumer: core::marker::PhantomData<C>,
+  checksumer: C,
 }
 
 impl<S, C> AppendLog<S, C> {
@@ -463,7 +463,7 @@ impl<S, C> AppendLog<S, C> {
   }
 }
 
-impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+impl<S: Snapshot> AppendLog<S> {
   /// Open and replay the append only log.
   #[cfg(feature = "std")]
   #[inline]
@@ -471,6 +471,20 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     path: P,
     snapshot_opts: S::Options,
     opts: Options,
+  ) -> Result<Self, Error<S>> {
+    Self::open_with_checksumer(path, snapshot_opts, opts, Crc32::default())
+  }
+}
+
+impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+  /// Open and replay the append only log with the given checksumer.
+  #[cfg(feature = "std")]
+  #[inline]
+  pub fn open_with_checksumer<P: AsRef<std::path::Path>>(
+    path: P,
+    snapshot_opts: S::Options,
+    opts: Options,
+    cks: C,
   ) -> Result<Self, Error<S>> {
     let existing = path.as_ref().exists();
     let path = path.as_ref();
@@ -489,6 +503,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       existing,
       opts,
       snapshot_opts,
+      cks,
     )
   }
 
@@ -512,7 +527,13 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     }
 
     // unwrap is ok, because this log cannot be used in concurrent environment
-    append::<S, C>(self.file.as_mut().unwrap(), &entry, self.opts.sync_on_write).and_then(|len| {
+    append::<S, C>(
+      self.file.as_mut().unwrap(),
+      &entry,
+      self.opts.sync_on_write,
+      &self.checksumer,
+    )
+    .and_then(|len| {
       self.len += len as u64;
       self.snapshot.insert(entry).map_err(Error::snapshot)
     })
@@ -547,7 +568,11 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         let mut cursor = 0;
         for ent in batch.iter() {
           cursor += ent
-            .encode::<C>(ent.data.encoded_size(), &mut $buf[cursor..])
+            .encode(
+              ent.data.encoded_size(),
+              &mut $buf[cursor..],
+              &self.checksumer,
+            )
             .map_err(Error::data)?;
         }
       }};
@@ -672,11 +697,14 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
 
-      let (_readed, ent) = Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + entry_size])
-        .map_err(|e| match e {
-          Some(e) => Error::data(e),
-          None => Error::ChecksumMismatch,
-        })?;
+      let (_readed, ent) = Entry::decode(
+        &old_mmap[read_cursor..read_cursor + entry_size],
+        &self.checksumer,
+      )
+      .map_err(|e| match e {
+        Some(e) => Error::data(e),
+        None => Error::ChecksumMismatch,
+      })?;
       self.snapshot.insert(ent).map_err(Error::snapshot)?;
       new_mmap[write_cursor..write_cursor + needed]
         .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
@@ -720,6 +748,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     existing: bool,
     opts: Options,
     snapshot_opts: S::Options,
+    cks: C,
   ) -> Result<Self, Error<S>> {
     let Options { magic_version, .. } = opts;
 
@@ -733,7 +762,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         rewrite_filename,
         file: Some(file),
         snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
-        _checksumer: core::marker::PhantomData,
+        checksumer: cks,
         opts,
         len: HEADER_SIZE as u64,
       });
@@ -794,7 +823,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       }
 
       let (_, ent) =
-        Entry::decode::<C>(&mmap[read_cursor..read_cursor + entry_size]).map_err(|e| match e {
+        Entry::decode(&mmap[read_cursor..read_cursor + entry_size], &cks).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
@@ -810,7 +839,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       file: Some(file),
       snapshot,
       len: size,
-      _checksumer: core::marker::PhantomData,
+      checksumer: cks,
       opts,
     };
 
@@ -852,12 +881,13 @@ fn append<S: Snapshot, C: Checksumer>(
   file: &mut File,
   ent: &Entry<S::Record>,
   sync: bool,
+  cks: &C,
 ) -> Result<usize, Error<S>> {
   let encoded_len = ent.data.encoded_size();
   if encoded_len + FIXED_ENTRY_LEN > MAX_INLINE_SIZE {
-    let mut buf = Vec::with_capacity(encoded_len + FIXED_ENTRY_LEN);
+    let mut buf = std::vec![0; encoded_len + FIXED_ENTRY_LEN];
     ent
-      .encode::<C>(encoded_len, &mut buf)
+      .encode(encoded_len, &mut buf, cks)
       .map_err(Error::data)?;
     let len = buf.len();
     file
@@ -873,7 +903,7 @@ fn append<S: Snapshot, C: Checksumer>(
   } else {
     let mut buf = [0; MAX_INLINE_SIZE];
     let buf = &mut buf[..encoded_len + FIXED_ENTRY_LEN];
-    ent.encode::<C>(encoded_len, buf).map_err(Error::data)?;
+    ent.encode(encoded_len, buf, cks).map_err(Error::data)?;
     let len = buf.len();
     file
       .write_all(buf)

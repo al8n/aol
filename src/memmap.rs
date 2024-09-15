@@ -358,6 +358,7 @@ impl Memmap {
     len: usize,
     entries: &[Entry<S::Record>],
     total_encoded_size: usize,
+    cks: &C,
   ) -> Result<usize, Error<S>> {
     match self {
       Memmap::Map { .. } => Err(read_only_error().into()),
@@ -374,7 +375,7 @@ impl Memmap {
         let mut cursor = 0;
         for ent in entries {
           cursor += ent
-            .encode::<C>(ent.data.encoded_size(), &mut buf[cursor..])
+            .encode(ent.data.encoded_size(), &mut buf[cursor..], cks)
             .map_err(Error::data)?;
         }
 
@@ -389,6 +390,7 @@ impl Memmap {
     len: usize,
     ent: &Entry<S::Record>,
     data_encoded_len: usize,
+    cks: &C,
   ) -> Result<usize, Error<S>> {
     match self {
       Memmap::Map { .. } => Err(read_only_error().into()),
@@ -401,7 +403,7 @@ impl Memmap {
 
         let buf = &mut mmap[len..len + encoded_len];
         ent
-          .encode::<C>(data_encoded_len, buf)
+          .encode(data_encoded_len, buf, cks)
           .map_err(Error::data)?;
 
         Ok(len + encoded_len)
@@ -417,6 +419,7 @@ impl Memmap {
     snapshot: &mut S,
     opts: &Options,
     len: usize,
+    cks: &C,
   ) -> Result<usize, Error<S>> {
     let old = mem::replace(self, Memmap::None);
     match old {
@@ -425,7 +428,7 @@ impl Memmap {
         Err(read_only_error().into())
       }
       Memmap::MapMut { mmap, file } => {
-        let (new_len, this) = Self::rewrite_in::<S, C>(
+        let (new_len, this) = Self::rewrite_in::<S, _>(
           mmap,
           Some(file),
           filename,
@@ -433,14 +436,23 @@ impl Memmap {
           snapshot,
           opts,
           len,
+          cks,
         )?;
 
         *self = this;
         Ok(new_len)
       }
       Memmap::MapAnon(mmap) => {
-        let (new_len, this) =
-          Self::rewrite_in::<S, C>(mmap, None, filename, rewrite_filename, snapshot, opts, len)?;
+        let (new_len, this) = Self::rewrite_in::<S, _>(
+          mmap,
+          None,
+          filename,
+          rewrite_filename,
+          snapshot,
+          opts,
+          len,
+          cks,
+        )?;
 
         *self = this;
         Ok(new_len)
@@ -449,6 +461,7 @@ impl Memmap {
     }
   }
 
+  #[allow(clippy::too_many_arguments)]
   fn rewrite_in<S: Snapshot, C: Checksumer>(
     old_mmap: MmapMut,
     old_file: Option<File>,
@@ -457,6 +470,7 @@ impl Memmap {
     snapshot: &mut S,
     opts: &Options,
     len: usize,
+    cks: &C,
   ) -> Result<(usize, Self), Error<S>> {
     snapshot.clear().map_err(Error::snapshot)?;
 
@@ -541,7 +555,7 @@ impl Memmap {
       }
 
       let (_, ent) =
-        Entry::decode::<C>(&old_mmap[read_cursor..read_cursor + needed]).map_err(|e| match e {
+        Entry::decode(&old_mmap[read_cursor..read_cursor + needed], cks).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
@@ -613,7 +627,7 @@ pub struct AppendLog<S, C = Crc32> {
   snapshot: S,
   len: usize,
   capacity: usize,
-  _checksumer: core::marker::PhantomData<C>,
+  checksumer: C,
 }
 
 impl<S, C> AppendLog<S, C> {
@@ -752,10 +766,42 @@ impl<S, C> AppendLog<S, C> {
   }
 }
 
-impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+impl<S: Snapshot> AppendLog<S> {
   /// Open a new append-only log backed by anonymous memory map with the given options.
   #[inline]
   pub fn map_anon(opts: Options, snapshot_opts: S::Options) -> Result<Self, Error<S>> {
+    Self::map_anon_with_checksumer(opts, snapshot_opts, Crc32::default())
+  }
+
+  /// Open and replay the append only log.
+  #[inline]
+  pub fn map_mut<P: AsRef<std::path::Path>>(
+    path: P,
+    opts: Options,
+    snapshot_opts: S::Options,
+  ) -> Result<Self, Error<S>> {
+    Self::map_mut_with_checksumer(path, opts, snapshot_opts, Crc32::default())
+  }
+
+  /// Open and replay the append only log in read-only mode.
+  #[inline]
+  pub fn map<P: AsRef<std::path::Path>>(
+    path: P,
+    opts: Options,
+    snapshot_opts: S::Options,
+  ) -> Result<Self, Error<S>> {
+    Self::map_with_checksumer(path, opts, snapshot_opts, Crc32::default())
+  }
+}
+
+impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+  /// Open a new append-only log backed by anonymous memory map with the given options.
+  #[inline]
+  pub fn map_anon_with_checksumer(
+    opts: Options,
+    snapshot_opts: S::Options,
+    cks: C,
+  ) -> Result<Self, Error<S>> {
     let mut mmap = memmap2::MmapMut::map_anon(opts.capacity)?;
     write_header_to_slice(&mut mmap, opts.magic_version);
 
@@ -766,17 +812,18 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       capacity: opts.capacity,
       len: HEADER_SIZE,
       snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
-      _checksumer: core::marker::PhantomData,
+      checksumer: cks,
       opts,
     })
   }
 
   /// Open and replay the append only log.
   #[inline]
-  pub fn map_mut<P: AsRef<std::path::Path>>(
+  pub fn map_mut_with_checksumer<P: AsRef<std::path::Path>>(
     path: P,
     opts: Options,
     snapshot_opts: S::Options,
+    cks: C,
   ) -> Result<Self, Error<S>> {
     let existing = path.as_ref().exists();
     let path = path.as_ref();
@@ -796,15 +843,17 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       opts,
       snapshot_opts,
       false,
+      cks,
     )
   }
 
   /// Open and replay the append only log in read-only mode.
   #[inline]
-  pub fn map<P: AsRef<std::path::Path>>(
+  pub fn map_with_checksumer<P: AsRef<std::path::Path>>(
     path: P,
     opts: Options,
     snapshot_opts: S::Options,
+    cks: C,
   ) -> Result<Self, Error<S>> {
     let existing = path.as_ref().exists();
     let path = path.as_ref();
@@ -822,6 +871,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       opts,
       snapshot_opts,
       true,
+      cks,
     )
   }
 
@@ -847,6 +897,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         &mut self.snapshot,
         &self.opts,
         self.len,
+        &self.checksumer,
       )?;
     }
 
@@ -855,11 +906,12 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
   #[inline]
   fn append_in(&mut self, ent: Entry<S::Record>, data_encoded_len: usize) -> Result<(), Error<S>> {
-    self.len = self
-      .file
-      .as_mut()
-      .unwrap()
-      .append::<S, C>(self.len, &ent, data_encoded_len)?;
+    self.len = self.file.as_mut().unwrap().append::<S, _>(
+      self.len,
+      &ent,
+      data_encoded_len,
+      &self.checksumer,
+    )?;
     self.snapshot.insert(ent).map_err(Error::snapshot)
   }
 
@@ -885,13 +937,14 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     if self.snapshot.should_rewrite(self.capacity - self.len)
       || total_encoded_size > self.capacity - self.len
     {
-      self.len = Memmap::rewrite::<S, C>(
+      self.len = Memmap::rewrite::<S, _>(
         self.file.as_mut().unwrap(),
         self.filename.as_ref(),
         self.rewrite_filename.as_ref(),
         &mut self.snapshot,
         &self.opts,
         self.len,
+        &self.checksumer,
       )?;
     }
 
@@ -904,29 +957,31 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     batch: Vec<Entry<S::Record>>,
     total_encoded_len: usize,
   ) -> Result<(), Error<S>> {
-    self.len =
-      self
-        .file
-        .as_mut()
-        .unwrap()
-        .append_batch::<S, C>(self.len, &batch, total_encoded_len)?;
+    self.len = self.file.as_mut().unwrap().append_batch::<S, _>(
+      self.len,
+      &batch,
+      total_encoded_len,
+      &self.checksumer,
+    )?;
     self.snapshot.insert_batch(batch).map_err(Error::snapshot)
   }
 
   /// Rewrite the append-only log.
   #[inline]
   pub fn rewrite(&mut self) -> Result<(), Error<S>> {
-    self.len = Memmap::rewrite::<S, C>(
+    self.len = Memmap::rewrite::<S, _>(
       self.file.as_mut().unwrap(),
       self.filename.as_ref(),
       self.rewrite_filename.as_ref(),
       &mut self.snapshot,
       &self.opts,
       self.len,
+      &self.checksumer,
     )?;
     Ok(())
   }
 
+  #[allow(clippy::too_many_arguments)]
   fn open_in(
     filename: PathBuf,
     rewrite_filename: PathBuf,
@@ -935,6 +990,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
     opts: Options,
     snapshot_opts: S::Options,
     read_only: bool,
+    cks: C,
   ) -> Result<Self, Error<S>> {
     let Options { magic_version, .. } = opts;
 
@@ -955,7 +1011,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         capacity: opts.capacity,
         len: size.max(HEADER_SIZE),
         snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
-        _checksumer: core::marker::PhantomData,
+        checksumer: cks,
         opts,
       });
     }
@@ -1030,7 +1086,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
         return Err(Error::entry_corrupted(needed, remaining));
       }
       let (_, ent) =
-        Entry::decode::<C>(&mmap[read_cursor..read_cursor + needed]).map_err(|e| match e {
+        Entry::decode(&mmap[read_cursor..read_cursor + needed], &cks).map_err(|e| match e {
           Some(e) => Error::data(e),
           None => Error::ChecksumMismatch,
         })?;
@@ -1046,16 +1102,17 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       capacity: if read_only { size } else { opts.capacity },
       len: size.max(HEADER_SIZE),
       opts,
-      _checksumer: core::marker::PhantomData,
+      checksumer: cks,
     };
 
     if !read_only && this.snapshot.should_rewrite(size) && this.opts.rewrite_on_open {
-      this.len = this.file.as_mut().unwrap().rewrite::<S, C>(
+      this.len = this.file.as_mut().unwrap().rewrite::<S, _>(
         this.filename.as_ref(),
         this.rewrite_filename.as_ref(),
         &mut this.snapshot,
         &this.opts,
         this.len,
+        &this.checksumer,
       )?;
     }
 

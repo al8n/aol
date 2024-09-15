@@ -148,7 +148,12 @@ impl Record for () {
 impl<R: Record> Entry<R> {
   #[cfg(feature = "std")]
   #[inline]
-  pub(super) fn encode<C>(&self, data_encoded_len: usize, buf: &mut [u8]) -> Result<usize, R::Error>
+  pub(super) fn encode<C>(
+    &self,
+    data_encoded_len: usize,
+    buf: &mut [u8],
+    cks: &C,
+  ) -> Result<usize, R::Error>
   where
     C: Checksumer,
   {
@@ -167,7 +172,7 @@ impl<R: Record> Entry<R> {
     );
     cursor += encoded;
 
-    let cks = C::checksum(&buf[..cursor]).to_le_bytes();
+    let cks = cks.checksum(&buf[..cursor]).to_le_bytes();
     buf[cursor..cursor + CHECKSUM_SIZE].copy_from_slice(&cks);
     cursor += CHECKSUM_SIZE;
 
@@ -183,7 +188,7 @@ impl<R: Record> Entry<R> {
 
   #[cfg(feature = "std")]
   #[inline]
-  pub(super) fn decode<C>(buf: &[u8]) -> Result<(usize, Self), Option<R::Error>>
+  pub(super) fn decode<C>(buf: &[u8], cks: &C) -> Result<(usize, Self), Option<R::Error>>
   where
     C: Checksumer,
   {
@@ -193,7 +198,7 @@ impl<R: Record> Entry<R> {
     let len = u32::from_le_bytes(buf[cursor..cursor + LEN_BUF_SIZE].try_into().unwrap());
     cursor += LEN_BUF_SIZE;
     let buf_len = buf.len();
-    let cks = C::checksum(&buf[..buf_len - CHECKSUM_SIZE]).to_le_bytes();
+    let cks = cks.checksum(&buf[..buf_len - CHECKSUM_SIZE]).to_le_bytes();
     if cks != buf[buf_len - CHECKSUM_SIZE..buf_len] {
       return Err(None);
     }
