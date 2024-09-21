@@ -4,6 +4,8 @@ use std::{
   path::PathBuf,
 };
 
+use checksum::{BuildChecksumer, Crc32};
+
 use super::*;
 
 pub use super::RewritePolicy;
@@ -476,7 +478,7 @@ impl<S: Snapshot> AppendLog<S> {
   }
 }
 
-impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   /// Open and replay the append only log with the given checksumer.
   #[cfg(feature = "std")]
   #[inline]
@@ -877,7 +879,7 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 }
 
 #[inline]
-fn append<S: Snapshot, C: Checksumer>(
+fn append<S: Snapshot, C: BuildChecksumer>(
   file: &mut File,
   ent: &Entry<S::Record>,
   sync: bool,

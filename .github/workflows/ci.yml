@@ -158,7 +158,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-          # - windows-latest
+          - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v3
@@ -210,12 +210,10 @@ jobs:
         run: rustup update $nightly && rustup default $nightly
       - name: Install rust-src
         run: rustup component add rust-src
-      - name: Install cargo-hack
-        run: cargo install cargo-hack
-      - name: ASAN / LSAN / TSAN (Linux)
+      - name: ASAN / LSAN / MSAN (Linux)
         run: ci/sanitizer.sh
         if: matrix.os == 'ubuntu-latest'
-      - name: ASAN / LSAN / TSAN
+      - name: ASAN / LSAN / MSAN
         run: ci/sanitizer_generic.sh
         if: matrix.os != 'ubuntu-latest'
 

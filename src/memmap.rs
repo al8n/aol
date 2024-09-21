@@ -1,9 +1,11 @@
+use core::ptr;
 use std::{
   fs::{File, OpenOptions},
   io::{self, Write},
   path::PathBuf,
 };
 
+use checksum::{BuildChecksumer, Crc32};
 use memmap2::MmapMut;
 
 use super::*;
@@ -353,7 +355,7 @@ impl core::ops::Deref for Memmap {
 }
 
 impl Memmap {
-  fn append_batch<S: Snapshot, C: Checksumer>(
+  fn append_batch<S: Snapshot, C: BuildChecksumer>(
     &mut self,
     len: usize,
     entries: &[Entry<S::Record>],
@@ -385,7 +387,7 @@ impl Memmap {
     }
   }
 
-  fn append<S: Snapshot, C: Checksumer>(
+  fn append<S: Snapshot, C: BuildChecksumer>(
     &mut self,
     len: usize,
     ent: &Entry<S::Record>,
@@ -412,7 +414,7 @@ impl Memmap {
     }
   }
 
-  fn rewrite<S: Snapshot, C: Checksumer>(
+  fn rewrite<S: Snapshot, C: BuildChecksumer>(
     &mut self,
     filename: Option<&PathBuf>,
     rewrite_filename: Option<&PathBuf>,
@@ -462,7 +464,7 @@ impl Memmap {
   }
 
   #[allow(clippy::too_many_arguments)]
-  fn rewrite_in<S: Snapshot, C: Checksumer>(
+  fn rewrite_in<S: Snapshot, C: BuildChecksumer>(
     old_mmap: MmapMut,
     old_file: Option<File>,
     filename: Option<&PathBuf>,
@@ -794,7 +796,7 @@ impl<S: Snapshot> AppendLog<S> {
   }
 }
 
-impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
+impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   /// Open a new append-only log backed by anonymous memory map with the given options.
   #[inline]
   pub fn map_anon_with_checksumer(
@@ -998,10 +1000,19 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
 
     if !existing && !read_only {
       if size < opts.capacity {
-        file.set_len(opts.capacity as u64).map_err(Error::io)?;
+        file
+          .set_len(opts.capacity as u64)
+          .and_then(|_| file.sync_all())
+          .map_err(Error::io)?;
       }
 
       let mut mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
+      let cap = mmap.len();
+      let ptr = mmap.as_mut_ptr();
+      unsafe {
+        ptr::write_bytes(ptr, 0, cap);
+      }
+
       write_header_to_slice(&mut mmap, magic_version);
 
       return Ok(Self {
@@ -1025,10 +1036,14 @@ impl<S: Snapshot, C: Checksumer> AppendLog<S, C> {
       Memmap::Map { file, mmap }
     } else {
       if size < opts.capacity {
-        file.set_len(opts.capacity as u64).map_err(Error::io)?;
+        file
+          .set_len(opts.capacity as u64)
+          .and_then(|_| file.sync_all())
+          .map_err(Error::io)?;
       }
 
       let mmap = unsafe { memmap2::MmapMut::map_mut(&file).map_err(Error::io)? };
+
       Memmap::MapMut { file, mmap }
     };
 

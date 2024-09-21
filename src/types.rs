@@ -155,7 +155,7 @@ impl<R: Record> Entry<R> {
     cks: &C,
   ) -> Result<usize, R::Error>
   where
-    C: Checksumer,
+    C: dbutils::checksum::BuildChecksumer,
   {
     let mut cursor = 0;
     buf[cursor] = self.flag.value;
@@ -172,7 +172,7 @@ impl<R: Record> Entry<R> {
     );
     cursor += encoded;
 
-    let cks = cks.checksum(&buf[..cursor]).to_le_bytes();
+    let cks = cks.checksum_one(&buf[..cursor]).to_le_bytes();
     buf[cursor..cursor + CHECKSUM_SIZE].copy_from_slice(&cks);
     cursor += CHECKSUM_SIZE;
 
@@ -190,7 +190,7 @@ impl<R: Record> Entry<R> {
   #[inline]
   pub(super) fn decode<C>(buf: &[u8], cks: &C) -> Result<(usize, Self), Option<R::Error>>
   where
-    C: Checksumer,
+    C: dbutils::checksum::BuildChecksumer,
   {
     let flag = EntryFlags { value: buf[0] };
 
@@ -198,7 +198,9 @@ impl<R: Record> Entry<R> {
     let len = u32::from_le_bytes(buf[cursor..cursor + LEN_BUF_SIZE].try_into().unwrap());
     cursor += LEN_BUF_SIZE;
     let buf_len = buf.len();
-    let cks = cks.checksum(&buf[..buf_len - CHECKSUM_SIZE]).to_le_bytes();
+    let cks = cks
+      .checksum_one(&buf[..buf_len - CHECKSUM_SIZE])
+      .to_le_bytes();
     if cks != buf[buf_len - CHECKSUM_SIZE..buf_len] {
       return Err(None);
     }
