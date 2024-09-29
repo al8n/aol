@@ -23,7 +23,7 @@ xxhash3 = ["dbutils/xxhash3"]
 [dependencies]
 bitflags = "2"
 crc32fast = "1"
-dbutils = { version = "0.3", default-features = false, features = ["crc32fast"] }
+dbutils = { version = "0.4", default-features = false, features = ["crc32fast"] }
 paste = "1"
 
 fs4 = { version = "0.9", optional = true }
