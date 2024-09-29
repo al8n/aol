@@ -26,11 +26,11 @@ English | [简体中文][zh-cn-url]
 When developing infrastructure softwares, write-ahead log or append-only log plays an important role, and people re-implement same
 funcationalities multiple times, but actually, the core for append-only log is just atomic `append`, `append_batch`, `replay`, and `rewrite`.
 
-This crate provides generic purpose append-only log implementation, there are two kinds of implementations based on `std::fs::File` and memory map.
+This crate provides generic purpose append-only log implementation based on `std::fs::File`.
 
 - `aol::fs::AppendLog`:
 
-  Generic append-only log implementation based on `std::fs::File`.
+  Generic purpose append-only log implementation based on `std::fs::File`.
 
   - It is good for:
     - The encoded entry size is smaller than `64` bytes.
@@ -41,20 +41,6 @@ This crate provides generic purpose append-only log implementation, there are tw
     - It is growable, do not require pre-allocated.
     - Support automatically rewrite.
     - No holes in the file.
-
-- `aol::memmap::AppendLog`:
-
-  Generic append-only log implementation based on [`memmap`](https://docs.rs/memmap2).
-
-  - It is good for:
-    - Any append-only log, if you do not care about pre-allocating the file and you know you data will
-      never larger than the pre-allocating size.
-
-  - Pros:
-    - Support automatic rewrite.
-    - No holes in the file.
-    - As this implementation is backed by an ARENA, no allocation required for both read and write.
-    - Fast read and write performance, backed by memory map, no extra I/O required.
 
 ### File Structure
 

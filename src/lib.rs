@@ -3,9 +3,10 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![deny(missing_docs, warnings)]
+#![allow(clippy::type_complexity)]
 
 #[cfg(not(any(feature = "std", feature = "alloc")))]
-compile_error!("`aol` cannot be compiled when both `std` and `alloc` are disabled.");
+compile_error!("`aol` cannot be compiled when both `std` is disabled.");
 
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
@@ -13,6 +14,7 @@ extern crate alloc as std;
 #[cfg(feature = "std")]
 extern crate std;
 
+#[cfg(feature = "std")]
 use core::mem;
 
 mod types;
@@ -23,15 +25,10 @@ pub use dbutils::*;
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub mod fs;
-
-/// Append-only log implementation based on memory-mapped files.
+mod fs;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub mod memmap;
-
-/// In-memory append-only log implementation.
-pub mod memory;
+pub use fs::*;
 
 #[cfg(feature = "std")]
 const MAGIC_LEN: usize = mem::size_of::<u16>();

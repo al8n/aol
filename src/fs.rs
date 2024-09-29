@@ -1,104 +1,24 @@
 use std::{
   fs::{File, OpenOptions},
-  io::{self, Write},
+  io::Write,
   path::PathBuf,
 };
 
+use among::Among;
 use checksum::{BuildChecksumer, Crc32};
 
 use super::*;
 
 pub use super::RewritePolicy;
 
+mod error;
+pub use error::Error;
+
+mod options;
+pub use options::Options;
+
 const CURRENT_VERSION: u16 = 0;
 const MAX_INLINE_SIZE: usize = 64;
-
-/// Errors for append-only file.
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
-pub enum Error<S: Snapshot> {
-  /// Missing corrupted append-only log header.
-  #[error("missing append-only log header, log may be corrupted")]
-  CorruptedHeader,
-
-  /// Snapshot has bad magic.
-  #[error("append-only has bad magic text")]
-  BadMagicText,
-  /// Cannot open append-only because the external magic doesn't match.
-  #[error("cannot open append-only because the external magic doesn't match. expected {expected}, found {found}")]
-  BadExternalMagic {
-    /// Expected external magic.
-    expected: u16,
-    /// Found external magic.
-    found: u16,
-  },
-  /// Cannot open append-only because the magic doesn't match.
-  #[error(
-    "cannot open append-only because the magic doesn't match. expected {expected}, found {found}"
-  )]
-  BadMagic {
-    /// Expected magic.
-    expected: u16,
-    /// Found magic.
-    found: u16,
-  },
-
-  /// Corrupted append-only file: entry checksum mismatch.
-  #[error("entry checksum mismatch")]
-  ChecksumMismatch,
-
-  /// Corrupted append-only file: not enough bytes to decode append-only entry.
-  #[error("entry data len {len} is greater than the remaining file size {remaining}, append-only file might be corrupted")]
-  EntryTooLarge {
-    /// Entry data len.
-    len: u32,
-    /// Remaining file size.
-    remaining: u32,
-  },
-
-  /// Encode/decode data error.
-  #[error(transparent)]
-  Record(<S::Record as Record>::Error),
-
-  /// Snapshot error.
-  #[error(transparent)]
-  Snapshot(S::Error),
-
-  /// I/O error.
-  #[error(transparent)]
-  IO(#[from] io::Error),
-}
-
-impl<S: Snapshot> core::fmt::Debug for Error<S> {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    core::fmt::Display::fmt(self, f)
-  }
-}
-
-impl<S: Snapshot> Error<S> {
-  /// Create a new `Error` from an I/O error.
-  #[inline]
-  pub const fn io(err: io::Error) -> Self {
-    Self::IO(err)
-  }
-
-  /// Create a new `Error` from a data error.
-  #[inline]
-  pub const fn data(err: <S::Record as Record>::Error) -> Self {
-    Self::Record(err)
-  }
-
-  /// Create a new `Error` from an unknown append-only event.
-  #[inline]
-  pub const fn snapshot(err: S::Error) -> Self {
-    Self::Snapshot(err)
-  }
-
-  /// Create a new `Corrupted` error.
-  #[inline]
-  pub(crate) const fn entry_corrupted(len: u32, remaining: u32) -> Self {
-    Self::EntryTooLarge { len, remaining }
-  }
-}
 
 /// The snapshot trait, snapshot may contain some in-memory information about the append-only log.
 pub trait Snapshot: Sized {
@@ -109,12 +29,7 @@ pub trait Snapshot: Sized {
   type Options;
 
   /// The error type.
-  #[cfg(feature = "std")]
-  type Error: std::error::Error;
-
-  /// The error type.
-  #[cfg(not(feature = "std"))]
-  type Error: core::fmt::Debug + core::fmt::Display;
+  type Error;
 
   /// Create a new snapshot.
   fn new(opts: Self::Options) -> Result<Self, Self::Error>;
@@ -151,210 +66,7 @@ pub trait Snapshot: Sized {
   fn clear(&mut self) -> Result<(), Self::Error>;
 }
 
-/// Options for the append only log.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Options {
-  magic_version: u16,
-  sync_on_write: bool,
-  rewrite_policy: RewritePolicy,
-  read_only: bool,
-}
-
-impl Default for Options {
-  /// Returns the default options.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::default();
-  /// ```
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl Options {
-  /// Create a new Options with the default values.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new();
-  /// ```
-  #[inline]
-  pub const fn new() -> Self {
-    Self {
-      magic_version: 0,
-      sync_on_write: true,
-      rewrite_policy: RewritePolicy::All,
-      read_only: false,
-    }
-  }
-
-  /// Get the external magic.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new();
-  ///
-  /// assert_eq!(opts.magic_version(), 0);
-  /// ```
-  #[inline]
-  pub const fn magic_version(&self) -> u16 {
-    self.magic_version
-  }
-
-  /// Get whether the append-only log is read-only.
-  ///
-  /// Default is `false`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new();
-  ///
-  /// assert_eq!(opts.read_only(), false);
-  /// ```
-  #[inline]
-  pub const fn read_only(&self) -> bool {
-    self.read_only
-  }
-
-  /// Get whether flush the data to disk after write.
-  ///
-  /// Default is `true`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new();
-  ///
-  /// assert_eq!(opts.sync_on_write(), true);
-  /// ```
-  #[inline]
-  pub const fn sync_on_write(&self) -> bool {
-    self.sync_on_write
-  }
-
-  /// Get the rewrite policy.
-  ///
-  /// Default is `RewritePolicy::All`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::{Options, RewritePolicy};
-  ///
-  /// let opts = Options::new().with_rewrite_policy(RewritePolicy::Skip(100));
-  ///
-  /// assert_eq!(opts.rewrite_policy(), RewritePolicy::Skip(100));
-  /// ```
-  #[inline]
-  pub const fn rewrite_policy(&self) -> RewritePolicy {
-    self.rewrite_policy
-  }
-
-  /// Set the external magic.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new().with_magic_version(1);
-  ///
-  /// assert_eq!(opts.magic_version(), 1);
-  /// ```
-  #[inline]
-  pub const fn with_magic_version(mut self, magic_version: u16) -> Self {
-    self.magic_version = magic_version;
-    self
-  }
-
-  /// Set whether the append-only log is read-only.
-  ///
-  /// Default is `false`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new().with_read_only(true);
-  ///
-  /// assert_eq!(opts.read_only(), true);
-  /// ```
-  #[inline]
-  pub const fn with_read_only(mut self, read_only: bool) -> Self {
-    self.read_only = read_only;
-    self
-  }
-
-  /// Set whether flush the data to disk after write.
-  ///
-  /// Default is `true`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::Options;
-  ///
-  /// let opts = Options::new().with_sync_on_write(false);
-  ///
-  /// assert_eq!(opts.sync_on_write(), false);
-  /// ```
-  #[inline]
-  pub const fn with_sync_on_write(mut self, sync_on_write: bool) -> Self {
-    self.sync_on_write = sync_on_write;
-    self
-  }
-
-  /// Set the rewrite policy.
-  ///
-  /// Default is `RewritePolicy::All`.
-  ///
-  /// # Example
-  ///
-  /// ```rust
-  /// use aol::fs::{Options, RewritePolicy};
-  ///
-  /// let opts = Options::new().with_rewrite_policy(RewritePolicy::Skip(100));
-  /// ```
-  #[inline]
-  pub const fn with_rewrite_policy(mut self, rewrite_policy: RewritePolicy) -> Self {
-    self.rewrite_policy = rewrite_policy;
-    self
-  }
-}
-
-/// Generic append-only log implementation based on [`std::fs::File`].
-///
-/// - It is good for:
-///   - The encoded entry size is smaller than `64`.
-///   - Manifest file.
-///   - Write is not too frequently.
-///
-/// - Compared to [`memmap::AppendLog`](crate::memmap::AppendLog):
-///   
-///   - Pros:
-///     - It is growable, do not require pre-allocated.
-///
-///   - Cons:
-///     - Read and write may require extra allocations (if the entry encoded size is larger than `64`) for encoding and decoding.
-///     - Each write requires an I/O system call.
+/// Append-only log implementation based on [`std::fs::File`].
 #[derive(Debug)]
 pub struct AppendLog<S, C = Crc32> {
   opts: Options,
@@ -467,27 +179,25 @@ impl<S, C> AppendLog<S, C> {
 
 impl<S: Snapshot> AppendLog<S> {
   /// Open and replay the append only log.
-  #[cfg(feature = "std")]
   #[inline]
   pub fn open<P: AsRef<std::path::Path>>(
     path: P,
     snapshot_opts: S::Options,
     opts: Options,
-  ) -> Result<Self, Error<S>> {
+  ) -> Result<Self, Among<<S::Record as Record>::Error, S::Error, Error>> {
     Self::open_with_checksumer(path, snapshot_opts, opts, Crc32::default())
   }
 }
 
 impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   /// Open and replay the append only log with the given checksumer.
-  #[cfg(feature = "std")]
   #[inline]
   pub fn open_with_checksumer<P: AsRef<std::path::Path>>(
     path: P,
     snapshot_opts: S::Options,
     opts: Options,
     cks: C,
-  ) -> Result<Self, Error<S>> {
+  ) -> Result<Self, Among<<S::Record as Record>::Error, S::Error, Error>> {
     let existing = path.as_ref().exists();
     let path = path.as_ref();
     let mut rewrite_path = path.to_path_buf();
@@ -513,8 +223,11 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   ///
   /// Returns the position of the entry in the append-only file.
   #[inline]
-  pub fn append(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
-    self.snapshot.validate(&entry).map_err(Error::snapshot)?;
+  pub fn append(
+    &mut self,
+    entry: Entry<S::Record>,
+  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
+    self.snapshot.validate(&entry).map_err(Among::Middle)?;
 
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
@@ -523,9 +236,12 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     self.append_in(entry)
   }
 
-  fn append_in(&mut self, entry: Entry<S::Record>) -> Result<(), Error<S>> {
+  fn append_in(
+    &mut self,
+    entry: Entry<S::Record>,
+  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
     if self.opts.read_only {
-      return Err(read_only_error().into());
+      return Err(Error::io(read_only_error()));
     }
 
     // unwrap is ok, because this log cannot be used in concurrent environment
@@ -537,20 +253,23 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     )
     .and_then(|len| {
       self.len += len as u64;
-      self.snapshot.insert(entry).map_err(Error::snapshot)
+      self.snapshot.insert(entry).map_err(Among::Middle)
     })
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch<B: Batch<S::Record>>(&mut self, batch: B) -> Result<(), Error<S>> {
+  pub fn append_batch<B: Batch<S::Record>>(
+    &mut self,
+    batch: B,
+  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
     if self.opts.read_only {
-      return Err(read_only_error().into());
+      return Err(Error::io(read_only_error()));
     }
 
     self
       .snapshot
       .validate_batch(&batch)
-      .map_err(Error::snapshot)?;
+      .map_err(Among::Middle)?;
 
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
@@ -559,7 +278,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     self.append_batch_in(batch)
   }
 
-  fn append_batch_in<B: Batch<S::Record>>(&mut self, batch: B) -> Result<(), Error<S>> {
+  fn append_batch_in<B: Batch<S::Record>>(
+    &mut self,
+    batch: B,
+  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
     let total_encoded_size = batch
       .iter()
       .map(|ent| ent.data.encoded_size())
@@ -575,7 +297,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
               &mut $buf[cursor..],
               &self.checksumer,
             )
-            .map_err(Error::data)?;
+            .map_err(Among::Left)?;
         }
       }};
     }
@@ -588,7 +310,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       encode_batch!(buf);
       file.write_all(&buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self.snapshot.insert_batch(batch).map_err(Error::snapshot)?;
+        self.snapshot.insert_batch(batch).map_err(Among::Middle)?;
         if self.opts.sync_on_write {
           file.flush().map_err(Error::io)
         } else {
@@ -602,7 +324,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
 
       file.write_all(buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self.snapshot.insert_batch(batch).map_err(Error::snapshot)?;
+        self.snapshot.insert_batch(batch).map_err(Among::Middle)?;
         if self.opts.sync_on_write {
           file.flush().map_err(Error::io)
         } else {
@@ -613,12 +335,12 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   }
 
   /// Rewrite the append-only log.
-  pub fn rewrite(&mut self) -> Result<(), Error<S>> {
+  pub fn rewrite(&mut self) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
     if self.opts.read_only {
-      return Err(read_only_error().into());
+      return Err(Error::io(read_only_error()));
     }
 
-    self.snapshot.clear().map_err(Error::snapshot)?;
+    self.snapshot.clear().map_err(Among::Middle)?;
 
     let old_file = self.file.take().unwrap();
 
@@ -629,7 +351,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       .truncate(true)
       .open(&self.rewrite_filename)
       .map_err(Error::io)?;
-    new_file.set_len(self.len)?;
+    new_file.set_len(self.len).map_err(Error::io)?;
 
     // create memory map for fast read and write
     let (mut new_mmap, old_mmap) = unsafe {
@@ -704,10 +426,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         &self.checksumer,
       )
       .map_err(|e| match e {
-        Some(e) => Error::data(e),
-        None => Error::ChecksumMismatch,
+        Some(e) => Among::Left(e),
+        None => Error::checksum_mismatch(),
       })?;
-      self.snapshot.insert(ent).map_err(Error::snapshot)?;
+      self.snapshot.insert(ent).map_err(Among::Middle)?;
       new_mmap[write_cursor..write_cursor + needed]
         .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
       read_cursor += needed;
@@ -751,19 +473,19 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     opts: Options,
     snapshot_opts: S::Options,
     cks: C,
-  ) -> Result<Self, Error<S>> {
+  ) -> Result<Self, Among<<S::Record as Record>::Error, S::Error, Error>> {
     let Options { magic_version, .. } = opts;
 
     let size = file.metadata().map_err(Error::io)?.len();
 
     if !existing || size == 0 {
-      Self::write_header(&mut file, magic_version)?;
+      Self::write_header(&mut file, magic_version).map_err(Among::Right)?;
 
       return Ok(Self {
         filename,
         rewrite_filename,
         file: Some(file),
-        snapshot: S::new(snapshot_opts).map_err(Error::snapshot)?,
+        snapshot: S::new(snapshot_opts).map_err(Among::Middle)?,
         checksumer: cks,
         opts,
         len: HEADER_SIZE as u64,
@@ -771,13 +493,13 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     }
 
     if size < HEADER_SIZE as u64 {
-      return Err(Error::CorruptedHeader);
+      return Err(Among::Right(Error::CorruptedHeader));
     }
 
-    let mmap = unsafe { memmap2::Mmap::map(&file)? };
+    let mmap = unsafe { memmap2::Mmap::map(&file).map_err(|e| Among::Right(e.into()))? };
 
     if &mmap[..MAGIC_TEXT_LEN] != MAGIC_TEXT {
-      return Err(Error::BadMagicText);
+      return Err(Among::Right(Error::BadMagicText));
     }
 
     let external = u16::from_le_bytes(
@@ -786,10 +508,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         .unwrap(),
     );
     if external != magic_version {
-      return Err(Error::BadExternalMagic {
+      return Err(Among::Right(Error::BadExternalMagic {
         expected: magic_version,
         found: external,
-      });
+      }));
     }
 
     let version = u16::from_le_bytes(
@@ -798,13 +520,13 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         .unwrap(),
     );
     if version != CURRENT_VERSION {
-      return Err(Error::BadMagic {
+      return Err(Among::Right(Error::BadMagic {
         expected: CURRENT_VERSION,
         found: version,
-      });
+      }));
     }
 
-    let mut snapshot = S::new(snapshot_opts).map_err(Error::snapshot)?;
+    let mut snapshot = S::new(snapshot_opts).map_err(Among::Middle)?;
 
     let mut read_cursor = HEADER_SIZE;
 
@@ -826,10 +548,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
 
       let (_, ent) =
         Entry::decode(&mmap[read_cursor..read_cursor + entry_size], &cks).map_err(|e| match e {
-          Some(e) => Error::data(e),
-          None => Error::ChecksumMismatch,
+          Some(e) => Among::Left(e),
+          None => Error::checksum_mismatch(),
         })?;
-      snapshot.insert(ent).map_err(Error::snapshot)?;
+      snapshot.insert(ent).map_err(Among::Middle)?;
       read_cursor += needed;
     }
 
@@ -853,7 +575,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   }
 
   #[inline]
-  fn write_header(file: &mut File, magic_version: u16) -> Result<(), Error<S>> {
+  fn write_header(file: &mut File, magic_version: u16) -> Result<(), Error> {
     let mut buf = [0; HEADER_SIZE];
     let mut cur = 0;
     buf[..MAGIC_TEXT_LEN].copy_from_slice(MAGIC_TEXT);
@@ -861,8 +583,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     buf[cur..cur + MAGIC_VERSION_LEN].copy_from_slice(&magic_version.to_le_bytes());
     cur += MAGIC_VERSION_LEN;
     buf[cur..HEADER_SIZE].copy_from_slice(&CURRENT_VERSION.to_le_bytes());
-    file.write_all(&buf).map_err(Error::io)?;
-    file.flush().map_err(Error::io)
+    file
+      .write_all(&buf)
+      .and_then(|_| file.flush())
+      .map_err(Into::into)
   }
 
   #[inline]
@@ -884,13 +608,13 @@ fn append<S: Snapshot, C: BuildChecksumer>(
   ent: &Entry<S::Record>,
   sync: bool,
   cks: &C,
-) -> Result<usize, Error<S>> {
+) -> Result<usize, Among<<S::Record as Record>::Error, S::Error, Error>> {
   let encoded_len = ent.data.encoded_size();
   if encoded_len + FIXED_ENTRY_LEN > MAX_INLINE_SIZE {
     let mut buf = std::vec![0; encoded_len + FIXED_ENTRY_LEN];
     ent
       .encode(encoded_len, &mut buf, cks)
-      .map_err(Error::data)?;
+      .map_err(Among::Left)?;
     let len = buf.len();
     file
       .write_all(&buf)
@@ -905,7 +629,7 @@ fn append<S: Snapshot, C: BuildChecksumer>(
   } else {
     let mut buf = [0; MAX_INLINE_SIZE];
     let buf = &mut buf[..encoded_len + FIXED_ENTRY_LEN];
-    ent.encode(encoded_len, buf, cks).map_err(Error::data)?;
+    ent.encode(encoded_len, buf, cks).map_err(Among::Left)?;
     let len = buf.len();
     file
       .write_all(buf)

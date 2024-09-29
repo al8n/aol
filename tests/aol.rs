@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 
-use aol::Entry;
+use among::Among;
+use aol::{Entry, Record};
 
 struct Sample {
   a: u64,
@@ -36,7 +37,7 @@ struct SampleSnapshot {
   deletions: Vec<Sample>,
 }
 
-impl aol::fs::Snapshot for SampleSnapshot {
+impl aol::Snapshot for SampleSnapshot {
   type Record = Sample;
 
   type Options = ();
@@ -74,47 +75,9 @@ impl aol::fs::Snapshot for SampleSnapshot {
   }
 }
 
-impl aol::memmap::Snapshot for SampleSnapshot {
-  type Record = Sample;
-
-  type Options = ();
-
-  type Error = core::convert::Infallible;
-
-  fn new(_opts: Self::Options) -> Result<Self, Self::Error> {
-    Ok(Self {
-      creations: Vec::new(),
-      deletions: Vec::new(),
-    })
-  }
-
-  fn should_rewrite(&self, _size: usize) -> bool {
-    self.deletions.len() > 100
-  }
-
-  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Self::Error> {
-    Ok(())
-  }
-
-  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
-    if entry.flag().is_creation() {
-      self.creations.push(entry.into_data());
-    } else {
-      self.deletions.push(entry.into_data());
-    }
-    Ok(())
-  }
-
-  fn clear(&mut self) -> Result<(), Self::Error> {
-    self.creations.clear();
-    self.deletions.clear();
-    Ok(())
-  }
-}
-
 trait AppendLog {
   type Record: aol::Record;
-  type Error: std::error::Error;
+  type Error;
 
   fn append(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
@@ -129,65 +92,39 @@ trait AppendLog {
   fn rewrite(&mut self) -> Result<(), Self::Error>;
 }
 
-impl<S: aol::fs::Snapshot> AppendLog for aol::fs::AppendLog<S> {
+impl<S: aol::Snapshot> AppendLog for aol::AppendLog<S> {
   type Record = S::Record;
-  type Error = aol::fs::Error<S>;
+  type Error = Among<<S::Record as Record>::Error, S::Error, aol::Error>;
 
   fn append(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
-    aol::fs::AppendLog::append(self, entry)
+    aol::AppendLog::append(self, entry)
   }
 
   fn append_batch(&mut self, batch: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
-    aol::fs::AppendLog::append_batch(self, batch)
+    aol::AppendLog::append_batch(self, batch)
   }
 
   fn flush(&self) -> Result<(), Self::Error> {
-    aol::fs::AppendLog::sync_data(self).map_err(Into::into)
+    aol::AppendLog::sync_data(self).map_err(|e| Among::Right(aol::Error::from(e)))
   }
 
   fn flush_async(&self) -> Result<(), Self::Error> {
-    aol::fs::AppendLog::sync_data(self).map_err(Into::into)
+    aol::AppendLog::sync_data(self).map_err(|e| Among::Right(aol::Error::from(e)))
   }
 
   fn sync_all(&self) -> Result<(), Self::Error> {
-    aol::fs::AppendLog::sync_all(self).map_err(Into::into)
+    aol::AppendLog::sync_all(self).map_err(|e| Among::Right(aol::Error::from(e)))
   }
 
   fn rewrite(&mut self) -> Result<(), Self::Error> {
-    aol::fs::AppendLog::rewrite(self).map_err(Into::into)
+    aol::AppendLog::rewrite(self)
   }
 }
 
-impl<S: aol::memmap::Snapshot> AppendLog for aol::memmap::AppendLog<S> {
-  type Record = S::Record;
-  type Error = aol::memmap::Error<S>;
-
-  fn append(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
-    aol::memmap::AppendLog::append(self, entry)
-  }
-
-  fn append_batch(&mut self, batch: Vec<Entry<Self::Record>>) -> Result<(), Self::Error> {
-    aol::memmap::AppendLog::append_batch(self, batch)
-  }
-
-  fn flush(&self) -> Result<(), Self::Error> {
-    aol::memmap::AppendLog::flush(self).map_err(Into::into)
-  }
-
-  fn flush_async(&self) -> Result<(), Self::Error> {
-    aol::memmap::AppendLog::flush_async(self).map_err(Into::into)
-  }
-
-  fn sync_all(&self) -> Result<(), Self::Error> {
-    aol::memmap::AppendLog::sync_all(self).map_err(Into::into)
-  }
-
-  fn rewrite(&mut self) -> Result<(), Self::Error> {
-    aol::memmap::AppendLog::rewrite(self).map_err(Into::into)
-  }
-}
-
-fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L) {
+fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L)
+where
+  L::Error: core::fmt::Debug,
+{
   const N: usize = 5001;
 
   for i in 0..N {
@@ -230,7 +167,7 @@ fn basic_write_entry<L: AppendLog<Record = Sample>>(mut l: L) {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_basic() {
-  use aol::fs::{AppendLog, Options};
+  use aol::{AppendLog, Options};
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs.log");
@@ -252,7 +189,7 @@ fn file_basic() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_write_large_entry() {
-  use aol::fs::{AppendLog, Options};
+  use aol::{AppendLog, Options};
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_write_large.log");
@@ -310,29 +247,10 @@ fn file_write_large_entry() {
   l.unlock().unwrap();
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn memmap_basic() {
-  use aol::memmap::{AppendLog, Options};
-
-  const GB: usize = 1024 * 1024 * 1024;
-
-  let dir = tempfile::tempdir().unwrap();
-  let p = dir.path().join("memmap.log");
-  let l = AppendLog::<SampleSnapshot>::map_mut(&p, Options::new(GB), ()).unwrap();
-  #[cfg(feature = "filelock")]
-  l.lock_exclusive().unwrap();
-  basic_write_entry(l);
-
-  let l = AppendLog::<SampleSnapshot>::map(&p, Options::new(GB), ()).unwrap();
-  #[cfg(feature = "filelock")]
-  l.lock_shared().unwrap();
-  assert_eq!(l.snapshot().creations.len(), 10002);
-  #[cfg(feature = "filelock")]
-  l.unlock().unwrap();
-}
-
-fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L) {
+fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L)
+where
+  L::Error: core::fmt::Debug,
+{
   const N: usize = 200;
   for i in 0..N {
     if i % 2 == 1 && i < 50 {
@@ -358,7 +276,7 @@ fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L) {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_rewrite_policy_skip() {
-  use aol::fs::{AppendLog, Options};
+  use aol::{AppendLog, Options};
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite_policy_skip.log");
@@ -385,7 +303,7 @@ fn file_rewrite_policy_skip() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_rewrite() {
-  use aol::fs::{AppendLog, Options};
+  use aol::{AppendLog, Options};
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite.log");
@@ -402,83 +320,4 @@ fn file_rewrite() {
   #[cfg(feature = "filelock")]
   l.unlock().unwrap();
   assert!(l.rewrite().is_err());
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn memmap_rewrite_policy_skip() {
-  use aol::memmap::{AppendLog, Options};
-
-  const GB: usize = 1024 * 1024 * 1024;
-
-  let dir = tempfile::tempdir().unwrap();
-  let p = dir.path().join("memmap_rewrite_policy_skip.log");
-  let mut l = AppendLog::<SampleSnapshot>::map_mut(
-    &p,
-    Options::new(GB).with_rewrite_policy(aol::RewritePolicy::Skip(100)),
-    (),
-  )
-  .unwrap();
-  #[cfg(feature = "filelock")]
-  l.lock_exclusive().unwrap();
-  rewrite(&mut l);
-
-  let mut l = AppendLog::<SampleSnapshot>::map(&p, Options::new(GB), ()).unwrap();
-  #[cfg(feature = "filelock")]
-  l.lock_shared().unwrap();
-  assert_eq!(l.snapshot().creations.len(), 75);
-  #[cfg(feature = "filelock")]
-  l.unlock().unwrap();
-  assert!(l.rewrite().is_err());
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn memmap_rewrite() {
-  use aol::memmap::{AppendLog, Options};
-
-  const GB: usize = 1024 * 1024 * 1024;
-
-  let dir = tempfile::tempdir().unwrap();
-  let p = dir.path().join("memmap_rewrite.log");
-  let mut l = AppendLog::<SampleSnapshot>::map_mut(&p, Options::new(GB), ()).unwrap();
-  #[cfg(feature = "filelock")]
-  l.try_lock_exclusive().unwrap();
-  rewrite(&mut l);
-
-  let mut l = AppendLog::<SampleSnapshot>::map(&p, Options::new(GB), ()).unwrap();
-  #[cfg(feature = "filelock")]
-  l.try_lock_shared().unwrap();
-  assert_eq!(l.snapshot().creations.len(), 175);
-  #[cfg(feature = "filelock")]
-  l.unlock().unwrap();
-  assert!(l.rewrite().is_err());
-}
-
-#[test]
-fn memmap_anon_rewrite_policy_skip() {
-  use aol::memmap::{AppendLog, Options};
-
-  const MB: usize = 1024 * 1024;
-
-  let mut l = AppendLog::<SampleSnapshot>::map_anon(
-    Options::new(MB).with_rewrite_policy(aol::RewritePolicy::Skip(100)),
-    (),
-  )
-  .unwrap();
-  rewrite(&mut l);
-
-  assert_eq!(l.snapshot().creations.len(), 75);
-}
-
-#[test]
-fn memmap_anon_rewrite() {
-  use aol::memmap::{AppendLog, Options};
-
-  const MB: usize = 1024 * 1024;
-
-  let mut l = AppendLog::<SampleSnapshot>::map_anon(Options::new(MB), ()).unwrap();
-  rewrite(&mut l);
-
-  assert_eq!(l.snapshot().creations.len(), 175);
 }

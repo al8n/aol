@@ -1,6 +1,6 @@
 [package]
 name = "aol"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/al8n/aol"
 homepage = "https://github.com/al8n/aol"
@@ -12,18 +12,20 @@ keywords = ["log", "append-only", "append-only-log", "database", "manifest"]
 rust-version = "1.56"
 
 [features]
-default = ["std"]
+default = ["std", "either/default", "among/default"]
 alloc = ["dbutils/alloc"]
-std = ["thiserror", "memmap2", "dbutils/default"]
+std = ["thiserror", "memmap2", "dbutils/default", "either/use_std", "among/std"]
 filelock = ["std", "fs4"]
 
 xxhash64 = ["dbutils/xxhash64"]
 xxhash3 = ["dbutils/xxhash3"]
 
 [dependencies]
+among = { version = "0.1", default-features = false }
 bitflags = "2"
 crc32fast = "1"
-dbutils = { version = "0.3", default-features = false, features = ["crc32fast"] }
+dbutils = { version = "0.4", default-features = false, features = ["crc32fast"] }
+either = { version = "1", default-features = false }
 paste = "1"
 
 fs4 = { version = "0.9", optional = true }

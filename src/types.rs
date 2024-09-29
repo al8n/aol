@@ -109,12 +109,7 @@ impl<D> Entry<D> {
 /// Record for the [`Entry`].
 pub trait Record: Sized {
   /// The error type returned by encoding.
-  #[cfg(feature = "std")]
-  type Error: std::error::Error;
-
-  /// The error type returned by encoding.
-  #[cfg(not(feature = "std"))]
-  type Error: core::fmt::Debug + core::fmt::Display;
+  type Error;
 
   /// Returns the encoded size of the data.
   fn encoded_size(&self) -> usize;
