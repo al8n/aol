@@ -60,7 +60,7 @@ This crate provides generic purpose append-only log implementation based on `std
 
 ```toml
 [dependencies]
-aol = "0.1"
+aol = "0.2"
 ```
 
 #### License

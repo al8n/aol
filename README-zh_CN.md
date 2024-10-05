@@ -24,7 +24,7 @@ English | [简体中文][zh-cn-url]
 
 ```toml
 [dependencies]
-aol = "0.1"
+aol = "0.2"
 ```
 
 ## File Structure
