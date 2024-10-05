@@ -74,7 +74,22 @@ impl Error {
 
   /// Create a new `Corrupted` error.
   #[inline]
-  pub(crate) const fn entry_corrupted<A, B>(len: u32, remaining: u32) -> Among<A, B, Self> {
+  pub(super) const fn entry_corrupted<A, B>(len: u32, remaining: u32) -> Among<A, B, Self> {
     Among::Right(Self::EntryTooLarge { len, remaining })
+  }
+
+  #[inline]
+  pub(super) const fn bad_external_magic<A, B>(expected: u16, found: u16) -> Among<A, B, Self> {
+    Among::Right(Self::BadExternalMagic { expected, found })
+  }
+
+  #[inline]
+  pub(super) const fn bad_magic<A, B>(expected: u16, found: u16) -> Among<A, B, Self> {
+    Among::Right(Self::BadMagic { expected, found })
+  }
+
+  #[inline]
+  pub(super) const fn corrupted_header<A, B>() -> Among<A, B, Self> {
+    Among::Right(Self::CorruptedHeader)
   }
 }

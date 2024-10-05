@@ -123,7 +123,7 @@ impl<S, C> AppendLog<S, C> {
 
   /// Lock the append-only log in exlusive mode.
   ///
-  /// See [`fs4::FileExt::lock_exclusive`] for more information.
+  /// See [`fs4::fs_std::FileExt::lock_exclusive`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn lock_exclusive(&self) -> std::io::Result<()> {
@@ -134,7 +134,7 @@ impl<S, C> AppendLog<S, C> {
 
   /// Lock the append-only log in shared mode.
   ///
-  /// See [`fs4::FileExt::lock_shared`] for more information.
+  /// See [`fs4::fs_std::FileExt::lock_shared`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn lock_shared(&self) -> std::io::Result<()> {
@@ -145,7 +145,7 @@ impl<S, C> AppendLog<S, C> {
 
   /// Try to lock the append-only log in exlusive mode.
   ///
-  /// See [`fs4::FileExt::try_lock_exclusive`] for more information.
+  /// See [`fs4::fs_std::FileExt::try_lock_exclusive`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn try_lock_exclusive(&self) -> std::io::Result<()> {
@@ -156,7 +156,7 @@ impl<S, C> AppendLog<S, C> {
 
   /// Try to lock the append-only log in shared mode.
   ///
-  /// See [`fs4::FileExt::try_lock_shared`] for more information.
+  /// See [`fs4::fs_std::FileExt::try_lock_shared`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn try_lock_shared(&self) -> std::io::Result<()> {
@@ -167,7 +167,7 @@ impl<S, C> AppendLog<S, C> {
 
   /// Unlock the append-only log.
   ///
-  /// See [`fs4::FileExt::unlock`] for more information.
+  /// See [`fs4::fs_std::FileExt::unlock`] for more information.
   #[cfg(feature = "filelock")]
   #[cfg_attr(docsrs, doc(cfg(feature = "filelock")))]
   pub fn unlock(&self) -> std::io::Result<()> {
@@ -187,6 +187,21 @@ impl<S: Snapshot> AppendLog<S> {
   ) -> Result<Self, Among<<S::Record as Record>::Error, S::Error, Error>> {
     Self::open_with_checksumer(path, snapshot_opts, opts, Crc32::default())
   }
+}
+
+macro_rules! encode_batch {
+  ($this:ident($buf:ident, $batch:ident)) => {{
+    let mut cursor = 0;
+    for ent in $batch.iter() {
+      cursor += ent
+        .encode(
+          ent.data.encoded_size(),
+          &mut $buf[cursor..],
+          &$this.checksumer,
+        )
+        .map_err(Among::Left)?;
+    }
+  }};
 }
 
 impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
@@ -262,6 +277,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     &mut self,
     batch: B,
   ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
+    if batch.is_empty() {
+      return Ok(());
+    }
+
     if self.opts.read_only {
       return Err(Error::io(read_only_error()));
     }
@@ -287,27 +306,12 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       .map(|ent| ent.data.encoded_size())
       .fold(batch.len() * FIXED_ENTRY_LEN, |acc, val| acc + val);
 
-    macro_rules! encode_batch {
-      ($buf:ident) => {{
-        let mut cursor = 0;
-        for ent in batch.iter() {
-          cursor += ent
-            .encode(
-              ent.data.encoded_size(),
-              &mut $buf[cursor..],
-              &self.checksumer,
-            )
-            .map_err(Among::Left)?;
-        }
-      }};
-    }
-
     // unwrap is ok, because this log cannot be used in concurrent environment
     let file = self.file.as_mut().unwrap();
 
     if total_encoded_size > MAX_INLINE_SIZE {
       let mut buf = std::vec![0; total_encoded_size];
-      encode_batch!(buf);
+      encode_batch!(self(buf, batch));
       file.write_all(&buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
         self.snapshot.insert_batch(batch).map_err(Among::Middle)?;
@@ -320,7 +324,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     } else {
       let mut buf = [0; MAX_INLINE_SIZE];
       let buf = &mut buf[..total_encoded_size];
-      encode_batch!(buf);
+      encode_batch!(self(buf, batch));
 
       file.write_all(buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
@@ -493,10 +497,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     }
 
     if size < HEADER_SIZE as u64 {
-      return Err(Among::Right(Error::CorruptedHeader));
+      return Err(Error::corrupted_header());
     }
 
-    let mmap = unsafe { memmap2::Mmap::map(&file).map_err(|e| Among::Right(e.into()))? };
+    let mmap = unsafe { memmap2::Mmap::map(&file).map_err(Error::io)? };
 
     if &mmap[..MAGIC_TEXT_LEN] != MAGIC_TEXT {
       return Err(Among::Right(Error::BadMagicText));
@@ -508,10 +512,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         .unwrap(),
     );
     if external != magic_version {
-      return Err(Among::Right(Error::BadExternalMagic {
-        expected: magic_version,
-        found: external,
-      }));
+      return Err(Error::bad_external_magic(magic_version, external));
     }
 
     let version = u16::from_le_bytes(
@@ -520,10 +521,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         .unwrap(),
     );
     if version != CURRENT_VERSION {
-      return Err(Among::Right(Error::BadMagic {
-        expected: CURRENT_VERSION,
-        found: version,
-      }));
+      return Err(Error::bad_magic(CURRENT_VERSION, version));
     }
 
     let mut snapshot = S::new(snapshot_opts).map_err(Among::Middle)?;
@@ -546,11 +544,11 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
 
-      let (_, ent) =
-        Entry::decode(&mmap[read_cursor..read_cursor + entry_size], &cks).map_err(|e| match e {
-          Some(e) => Among::Left(e),
-          None => Error::checksum_mismatch(),
-        })?;
+      let res = Entry::decode(&mmap[read_cursor..read_cursor + entry_size], &cks);
+      let (_, ent) = res.map_err(|e| match e {
+        Some(e) => Among::Left(e),
+        None => Error::checksum_mismatch(),
+      })?;
       snapshot.insert(ent).map_err(Among::Middle)?;
       read_cursor += needed;
     }

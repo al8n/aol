@@ -11,7 +11,7 @@ pub struct Entry<D> {
 impl<D> Entry<D> {
   /// Create a new creation entry.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Entry;
@@ -28,7 +28,7 @@ impl<D> Entry<D> {
 
   /// Create a new deletion entry.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Entry;
@@ -45,7 +45,7 @@ impl<D> Entry<D> {
 
   /// Create a new creation entry with custom flags.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{Entry, CustomFlags};
@@ -62,7 +62,7 @@ impl<D> Entry<D> {
 
   /// Create a new deletion entry with custom flags.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{Entry, CustomFlags};
@@ -79,7 +79,7 @@ impl<D> Entry<D> {
 
   /// Get the flag.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{Entry, EntryFlags, CustomFlags};

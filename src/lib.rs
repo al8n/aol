@@ -35,7 +35,7 @@ const MAGIC_LEN: usize = mem::size_of::<u16>();
 
 /// Magic text for the append only log, this will never be changed.
 #[cfg(feature = "std")]
-const MAGIC_TEXT: &[u8] = b"al8n";
+const MAGIC_TEXT: &[u8] = b"aol!";
 #[cfg(feature = "std")]
 const MAGIC_TEXT_LEN: usize = MAGIC_TEXT.len();
 #[cfg(feature = "std")]
@@ -91,25 +91,66 @@ macro_rules! bits_api {
     $(
       paste::paste! {
         #[doc = concat!("Set the bit", $num,)]
+        ///
+        /// ## Example
+        ///
+        /// ```rust
+        /// use aol::CustomFlags;
+        ///
+        /// let mut flags = CustomFlags::empty();
+        ///
+        #[doc = concat!("flags.set_bit", $num, "();")]
+        /// ```
         #[inline]
         pub fn [< set_bit $num >] (&mut self) {
           self.0.insert(CustomFlagsCore::[< BIT $num >]);
         }
 
         #[doc = concat!("Set the bit", $num,)]
+        ///
+        /// ## Example
+        ///
+        /// ```rust
+        /// use aol::CustomFlags;
+        ///
+        /// let flags = CustomFlags::empty();
+        ///
+        #[doc = concat!("let flags = flags.with_bit", $num, "();")]
+        /// ```
         #[inline]
         pub fn [< with_bit $num >] (mut self) -> Self {
           self.0.insert(CustomFlagsCore::[< BIT $num >]);
           self
         }
 
-        #[doc = concat!("Clear the bit", $num,)]
+        #[doc = concat!("Clear the bit", $num)]
+        ///
+        /// ## Example
+        ///
+        /// ```rust
+        /// use aol::CustomFlags;
+        ///
+        /// let mut flags = CustomFlags::all();
+        ///
+        #[doc = concat!("flags.clear_bit", $num, "();")]
+        #[doc = concat!("assert_eq!(flags.bit", $num, "(), false);")]
+        /// ```
         #[inline]
         pub fn [< clear_bit $num >](&mut self) {
           self.0.remove(CustomFlagsCore::[< BIT $num >]);
         }
 
         #[doc = concat!("Returns `true` if the bit", $num, " is set.")]
+        ///
+        /// ## Example
+        ///
+        /// ```rust
+        /// use aol::CustomFlags;
+        ///
+        /// let flags = CustomFlags::all();
+        ///
+        #[doc = concat!("assert_eq!(flags.bit", $num, "(), true);")]
+        /// ```
         #[inline]
         pub const fn [< bit $num >](&self) -> bool {
           self.0.contains(CustomFlagsCore::[< BIT $num >])
@@ -120,12 +161,25 @@ macro_rules! bits_api {
 }
 
 macro_rules! flags_api {
-  ($($name:ident: $doc:literal), +$(,)?) => {
+  ($($name:ident: #[$doc:meta]), +$(,)?) => {
     $(
-      #[doc = $doc]
-      #[inline]
-      pub const fn $name(&self, other: Self) -> Self {
-        Self(CustomFlagsCore::from_bits_retain((self.0.$name(other.0).bits() & MASK)))
+      paste::paste! {
+        #[$doc]
+        ///
+        /// ## Example
+        ///
+        /// ```rust
+        /// use aol::CustomFlags;
+        ///
+        /// let flags1 = CustomFlags::all();
+        /// let flags2 = CustomFlags::empty();
+        ///
+        #[doc = "let flags = flags1." $name "(flags2);"]
+        /// ```
+        #[inline]
+        pub const fn $name(&self, other: Self) -> Self {
+          Self(CustomFlagsCore::from_bits_retain((self.0.$name(other.0).bits() & MASK)))
+        }
       }
     )*
   };
@@ -174,7 +228,7 @@ impl_bitwise_ops! {
 impl CustomFlags {
   /// Get a flags value with all known bits set.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -183,12 +237,14 @@ impl CustomFlags {
   /// ```
   #[inline]
   pub const fn all() -> Self {
-    Self(CustomFlagsCore::all())
+    Self(CustomFlagsCore::from_bits_retain(
+      CustomFlagsCore::all().bits() & MASK,
+    ))
   }
 
   /// Get a flags value with all known bits unset.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -202,7 +258,7 @@ impl CustomFlags {
 
   /// Whether all set bits in a source flags value are also set in a target flags value.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -218,7 +274,7 @@ impl CustomFlags {
 
   /// The bitwise exclusive-or (`^`) of the bits in two flags values.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -236,7 +292,7 @@ impl CustomFlags {
 
   /// The bitwise negation (`!`) of the bits in a flags value, truncating the result.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -254,7 +310,7 @@ impl CustomFlags {
 
   /// Whether all bits in this flags value are unset.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -270,7 +326,7 @@ impl CustomFlags {
 
   /// Whether any bits in this flags value are set.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::CustomFlags;
@@ -285,14 +341,11 @@ impl CustomFlags {
   }
 
   flags_api! {
-    union: "The bitwise intersection (`|`) of the bits in two flags values.",
-    intersection: "The bitwise intersection (`&`) of the bits in two flags values.",
-    difference: "
-    The intersection of a source flags value with the complement of a target flags value (`&!`).
-
-    This method is not equivalent to `self & !other` when `other` has unknown bits set. difference won't truncate other, but the `!` operator will.
-    ",
-    symmetric_difference: "The bitwise exclusive-or (`^`) of the bits in two flags values.",
+    union: #[doc = "The bitwise intersection (`|`) of the bits in two flags values."],
+    intersection: #[doc = "The bitwise intersection (`&`) of the bits in two flags values."],
+    difference: #[doc = concat!("The intersection of a source flags value with the complement of a target flags value (`&!`).", "\n\n",
+    "This method is not equivalent to `self & !other` when `other` has unknown bits set. difference won't truncate other, but the `!` operator will.")],
+    symmetric_difference: #[doc = "The bitwise exclusive-or (`^`) of the bits in two flags values."],
   }
 
   bits_api!(1, 2, 3, 4, 5, 6, 7);
@@ -331,7 +384,7 @@ impl core::fmt::Debug for EntryFlags {
 impl EntryFlags {
   /// Creates a new [`EntryFlags`] with the creation flag set
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::EntryFlags;
@@ -347,7 +400,7 @@ impl EntryFlags {
 
   /// Creates a new [`EntryFlags`] with the deletion flag set
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::EntryFlags;
@@ -363,7 +416,7 @@ impl EntryFlags {
 
   /// Creates a new [`EntryFlags`] with the deletion flag set
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{EntryFlags, CustomFlags};
@@ -381,7 +434,7 @@ impl EntryFlags {
 
   /// Creates a new [`EntryFlags`] with the creation flag set
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{EntryFlags, CustomFlags};
@@ -398,24 +451,47 @@ impl EntryFlags {
   }
 
   /// Returns the custom flag
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use aol::{EntryFlags, CustomFlags};
+  ///
+  /// let entry = EntryFlags::creation_with_custom_flag(CustomFlags::empty());
+  ///
+  /// assert_eq!(entry.custom_flag(), CustomFlags::empty());
+  /// ```
   #[inline]
   pub const fn custom_flag(&self) -> CustomFlags {
-    CustomFlags(CustomFlagsCore::from_bits_retain(self.value >> 1))
+    CustomFlags(CustomFlagsCore::from_bits_retain(self.value & MASK))
   }
 
   /// Set the custom flag
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use aol::{EntryFlags, CustomFlags};
+  ///
+  /// let mut entry = EntryFlags::creation_with_custom_flag(CustomFlags::empty());
+  ///
+  /// entry.set_custom_flag(CustomFlags::all());
+  ///
+  /// assert_eq!(entry.custom_flag(), CustomFlags::all());
+  /// ```
   #[inline]
   pub fn set_custom_flag(&mut self, flag: CustomFlags) {
-    self.value = (flag.bits() << 1) & MASK | (self.value & DELETE_FLAG);
+    // Directly set the custom flags without shifting.
+    self.value = (flag.bits() & MASK) | (self.value & DELETE_FLAG);
   }
 
-  /// Returns `true`` if the entry is a deletion.
+  /// Returns `true` if the entry is a deletion.
   #[inline]
   pub const fn is_deletion(&self) -> bool {
     (self.value & DELETE_FLAG) != 0
   }
 
-  /// Returns `true`` if the entry is a creation.
+  /// Returns `true` if the entry is a creation.
   #[inline]
   pub const fn is_creation(&self) -> bool {
     (self.value & DELETE_FLAG) == 0

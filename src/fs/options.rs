@@ -13,7 +13,7 @@ pub struct Options {
 impl Default for Options {
   /// Returns the default options.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -29,7 +29,7 @@ impl Default for Options {
 impl Options {
   /// Create a new Options with the default values.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -48,7 +48,7 @@ impl Options {
 
   /// Get the external magic.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -66,7 +66,7 @@ impl Options {
   ///
   /// Default is `false`.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -84,7 +84,7 @@ impl Options {
   ///
   /// Default is `true`.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -102,7 +102,7 @@ impl Options {
   ///
   /// Default is `RewritePolicy::All`.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{Options, RewritePolicy};
@@ -118,7 +118,7 @@ impl Options {
 
   /// Set the external magic.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -137,7 +137,7 @@ impl Options {
   ///
   /// Default is `false`.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -156,7 +156,7 @@ impl Options {
   ///
   /// Default is `true`.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::Options;
@@ -175,7 +175,7 @@ impl Options {
   ///
   /// Default is `RewritePolicy::All`.
   ///
-  /// # Example
+  /// ## Example
   ///
   /// ```rust
   /// use aol::{Options, RewritePolicy};

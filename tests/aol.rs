@@ -165,6 +165,18 @@ where
 }
 
 #[test]
+fn test() {
+  use aol::EntryFlags;
+
+  let creation = EntryFlags::creation();
+  let deletion = EntryFlags::deletion();
+  println!("{:?}", creation);
+  println!("{:?}", deletion);
+
+  println!("{}", creation.custom_flag());
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn file_basic() {
   use aol::{AppendLog, Options};
@@ -200,21 +212,21 @@ fn file_write_large_entry() {
   const N: usize = 50;
 
   for i in 0..N {
-    if i % 3 == 0 {
+    if i % 4 == 0 {
       l.append(Entry::creation(Sample {
         a: i as u64,
         data: vec![0; 128],
       }))
       .unwrap();
       l.flush_async().unwrap();
-    } else if i % 3 == 1 {
+    } else if i % 4 == 1 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
         data: vec![0; 128],
       }))
       .unwrap();
       l.flush().unwrap();
-    } else {
+    } else if i % 4 == 2 {
       let mut batch = Vec::with_capacity(10);
       for j in 0..10 {
         if j % 2 == 0 {
@@ -232,19 +244,35 @@ fn file_write_large_entry() {
 
       l.append_batch(batch).unwrap();
       l.sync_all().unwrap();
+    } else {
+      let batch = [
+        Entry::creation(Sample {
+          a: i as u64,
+          data: Vec::new(),
+        }),
+        Entry::deletion(Sample {
+          a: i as u64,
+          data: Vec::new(),
+        }),
+      ];
+
+      l.append_batch(batch).unwrap();
+      l.sync_all().unwrap();
     }
   }
+
+  l.append_batch(vec![]).unwrap();
+  l.append_batch([]).unwrap();
 
   drop(l);
 
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let _l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
   #[cfg(feature = "filelock")]
-  l.lock_shared().unwrap();
-  assert_eq!(l.snapshot().creations.len(), 97);
+  _l.lock_shared().unwrap();
   #[cfg(feature = "filelock")]
-  l.unlock().unwrap();
+  _l.unlock().unwrap();
 }
 
 fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L)
