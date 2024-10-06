@@ -572,8 +572,16 @@ pub trait Batch<I, R> {
 
 macro_rules! batch_impl {
   ($ty:ty) => {
-    type Iter<'a> = ::core::slice::Iter<'a, I> where R: 'a, Self: 'a, I: AsRef<Entry<R>> + 'a;
-    type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter where I: Into<Entry<R>>;
+    type Iter<'a>
+      = ::core::slice::Iter<'a, I>
+    where
+      R: 'a,
+      Self: 'a,
+      I: AsRef<Entry<R>> + 'a;
+    type IntoIter
+      = <$ty as ::core::iter::IntoIterator>::IntoIter
+    where
+      I: Into<Entry<R>>;
 
     #[inline]
     fn len(&self) -> usize {

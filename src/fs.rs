@@ -1,7 +1,8 @@
+use core::convert::Infallible;
 use std::{
   fs::{File, OpenOptions},
   io::Write,
-  path::PathBuf,
+  path::{Path, PathBuf},
 };
 
 use among::Among;
@@ -17,6 +18,9 @@ pub use error::Error;
 
 mod options;
 pub use options::Options;
+
+mod builder;
+pub use builder::Builder;
 
 const CURRENT_VERSION: u16 = 0;
 const MAX_INLINE_SIZE: usize = 64;
@@ -87,6 +91,45 @@ pub trait Snapshot: Sized {
   fn clear(&mut self) -> Result<(), Self::Error>;
 }
 
+impl Snapshot for () {
+  type Record = ();
+
+  type Options = ();
+
+  type Error = Infallible;
+
+  #[inline]
+  fn new(_opts: Self::Options) -> Result<Self, Self::Error> {
+    Ok(())
+  }
+
+  #[inline]
+  fn should_rewrite(&self, _size: u64) -> bool {
+    false
+  }
+
+  #[inline]
+  fn validate(
+    &self,
+    _entry: &Entry<Self::Record>,
+  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>> {
+    Ok(())
+  }
+
+  #[inline]
+  fn insert(
+    &mut self,
+    _entry: Entry<Self::Record>,
+  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>> {
+    Ok(())
+  }
+
+  #[inline]
+  fn clear(&mut self) -> Result<(), Self::Error> {
+    Ok(())
+  }
+}
+
 /// Append-only log implementation based on [`std::fs::File`].
 #[derive(Debug)]
 pub struct AppendLog<S, C = Crc32> {
@@ -114,7 +157,7 @@ impl<S, C> AppendLog<S, C> {
 
   /// Returns the path to the append-only file.
   #[inline]
-  pub fn path(&self) -> &std::path::Path {
+  pub fn path(&self) -> &Path {
     &self.filename
   }
 
@@ -198,18 +241,6 @@ impl<S, C> AppendLog<S, C> {
   }
 }
 
-impl<S: Snapshot> AppendLog<S> {
-  /// Open and replay the append only log.
-  #[inline]
-  pub fn open<P: AsRef<std::path::Path>>(
-    path: P,
-    snapshot_opts: S::Options,
-    opts: Options,
-  ) -> Result<Self, Among<<S::Record as Record>::Error, S::Error, Error>> {
-    Self::open_with_checksumer(path, snapshot_opts, opts, Crc32::default())
-  }
-}
-
 macro_rules! encode_batch {
   ($this:ident($buf:ident, $batch:ident)) => {{
     let mut cursor = 0;
@@ -227,35 +258,6 @@ macro_rules! encode_batch {
 }
 
 impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
-  /// Open and replay the append only log with the given checksumer.
-  #[inline]
-  pub fn open_with_checksumer<P: AsRef<std::path::Path>>(
-    path: P,
-    snapshot_opts: S::Options,
-    opts: Options,
-    cks: C,
-  ) -> Result<Self, Among<<S::Record as Record>::Error, S::Error, Error>> {
-    let existing = path.as_ref().exists();
-    let path = path.as_ref();
-    let mut rewrite_path = path.to_path_buf();
-    rewrite_path.set_extension("rewrite");
-    let file = OpenOptions::new()
-      .append(true)
-      .create(true)
-      .read(true)
-      .open(path)
-      .map_err(Error::io)?;
-    Self::open_in(
-      path.to_path_buf(),
-      rewrite_path,
-      file,
-      existing,
-      opts,
-      snapshot_opts,
-      cks,
-    )
-  }
-
   /// Append an entry to the append-only file.
   ///
   /// Returns the position of the entry in the append-only file.
@@ -285,7 +287,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     append::<S, C>(
       self.file.as_mut().unwrap(),
       &entry,
-      self.opts.sync_on_write,
+      self.opts.sync,
       &self.checksumer,
     )
     .and_then(|len| {
@@ -342,7 +344,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       file.write_all(&buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
         self.snapshot.insert_batch(batch)?;
-        if self.opts.sync_on_write {
+        if self.opts.sync {
           file.flush().map_err(Error::io)
         } else {
           Ok(())
@@ -356,7 +358,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       file.write_all(buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
         self.snapshot.insert_batch(batch)?;
-        if self.opts.sync_on_write {
+        if self.opts.sync {
           file.flush().map_err(Error::io)
         } else {
           Ok(())
@@ -510,6 +512,10 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     let size = file.metadata().map_err(Error::io)?.len();
 
     if !existing || size == 0 {
+      if opts.read_only {
+        return Err(Error::io(read_only_error()));
+      }
+
       Self::write_header(&mut file, magic_version).map_err(Among::Right)?;
 
       return Ok(Self {
@@ -592,7 +598,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       opts,
     };
 
-    if this.snapshot.should_rewrite(this.len) {
+    if this.snapshot.should_rewrite(this.len) && !this.opts.read_only {
       return this.rewrite().map(|_| this);
     }
 

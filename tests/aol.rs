@@ -179,18 +179,28 @@ fn test() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_basic() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs.log");
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+
+  let l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_write(true)
+    .build(&p)
+    .unwrap();
+
   #[cfg(feature = "filelock")]
   l.lock_exclusive().unwrap();
   basic_write_entry(l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let l = Builder::<SampleSnapshot>::default()
+    .with_create(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 10002);
@@ -201,11 +211,16 @@ fn file_basic() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_write_large_entry() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_write_large.log");
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.lock_exclusive().unwrap();
 
@@ -268,7 +283,12 @@ fn file_write_large_entry() {
 
   let mut open_opts = OpenOptions::new();
   open_opts.read(true).create(true).append(true);
-  let _l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let _l = Builder::<SampleSnapshot>::default()
+    .with_create(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   _l.lock_shared().unwrap();
   #[cfg(feature = "filelock")]
@@ -304,22 +324,29 @@ where
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_rewrite_policy_skip() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite_policy_skip.log");
-  let mut l = AppendLog::<SampleSnapshot>::open(
-    &p,
-    (),
-    Options::new().with_rewrite_policy(aol::RewritePolicy::Skip(100)),
-  )
-  .unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_append(true)
+    .with_rewrite_policy(aol::RewritePolicy::Skip(100))
+    .build(&p)
+    .unwrap();
+
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
 
-  let mut l =
-    AppendLog::<SampleSnapshot>::open(&p, (), Options::new().with_read_only(true)).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_snapshot_options::<SampleSnapshot>(())
+    .with_read(true)
+    .with_read_only(true)
+    .build(&p)
+    .unwrap();
+
   #[cfg(feature = "filelock")]
   l.try_lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 75);
@@ -331,17 +358,25 @@ fn file_rewrite_policy_skip() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_rewrite() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite.log");
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
 
-  let mut l =
-    AppendLog::<SampleSnapshot>::open(&p, (), Options::new().with_read_only(true)).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_read(true)
+    .with_read_only(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 175);
