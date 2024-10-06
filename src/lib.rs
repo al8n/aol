@@ -116,11 +116,11 @@ macro_rules! bits_api {
         /// let flags = CustomFlags::empty();
         ///
         #[doc = concat!("let flags = flags.with_bit", $num, "();")]
+        #[doc = concat!("assert!(flags.bit", $num, "());")]
         /// ```
         #[inline]
-        pub fn [< with_bit $num >] (mut self) -> Self {
-          self.0.insert(CustomFlagsCore::[< BIT $num >]);
-          self
+        pub const fn [< with_bit $num >] (self) -> Self {
+          Self(self.0.union(CustomFlagsCore::[< BIT $num >]))
         }
 
         #[doc = concat!("Clear the bit", $num)]
@@ -523,15 +523,18 @@ pub enum RewritePolicy {
 }
 
 /// A batch of entries.
-pub trait Batch<R> {
+pub trait Batch<I, R> {
   /// The iterator type which yields references to the entries.
-  type Iter<'a>: Iterator<Item = &'a Entry<R>>
+  type Iter<'a>: Iterator<Item = &'a I>
   where
     Self: 'a,
-    R: 'a;
+    R: 'a,
+    I: AsRef<Entry<R>> + 'a;
 
   /// The iterator type which yields owned entries.
-  type IntoIter: Iterator<Item = Entry<R>>;
+  type IntoIter: Iterator<Item = I>
+  where
+    I: Into<Entry<R>>;
 
   /// Returns the number of entries in the batch.
   fn len(&self) -> usize;
@@ -542,44 +545,65 @@ pub trait Batch<R> {
   }
 
   /// Returns an iterator which yields references to the entries.
-  fn iter(&self) -> Self::Iter<'_>;
+  fn iter<'a>(&'a self) -> Self::Iter<'a>
+  where
+    R: 'a,
+    I: AsRef<Entry<R>> + 'a;
 
   /// Returns an iterator which yields owned entries.
-  fn into_iter(self) -> Self::IntoIter;
+  fn into_iter(self) -> Self::IntoIter
+  where
+    I: Into<Entry<R>>;
+}
+
+macro_rules! batch_impl {
+  ($ty:ty) => {
+    type Iter<'a> = ::core::slice::Iter<'a, I> where R: 'a, Self: 'a, I: AsRef<Entry<R>> + 'a;
+    type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter where I: Into<Entry<R>>;
+
+    #[inline]
+    fn len(&self) -> usize {
+      <[I]>::len(self)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+      <[I]>::is_empty(self)
+    }
+
+    #[inline]
+    fn iter<'a>(&'a self) -> Self::Iter<'a>
+    where
+      R: 'a,
+      I: AsRef<Entry<R>> + 'a,
+    {
+      <[I]>::iter(self)
+    }
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter
+    where
+      I: Into<Entry<R>>,
+    {
+      ::core::iter::IntoIterator::into_iter(self)
+    }
+  };
 }
 
 macro_rules! impl_batch_for_vec {
   ($($ty:ty), +$(,)?) => {
     $(
-      impl<D> $crate::Batch<D> for $ty {
-        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
-        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
-
-        #[inline]
-        fn len(&self) -> usize {
-          <[Entry<D>]>::len(self)
-        }
-
-        #[inline]
-        fn is_empty(&self) -> bool {
-          <[Entry<D>]>::is_empty(self)
-        }
-
-        #[inline]
-        fn iter(&self) -> Self::Iter<'_> {
-          <[Entry<D>]>::iter(self)
-        }
-
-        #[inline]
-        fn into_iter(self) -> Self::IntoIter {
-          ::core::iter::IntoIterator::into_iter(self)
-        }
+      impl<I, R> $crate::Batch<I, R> for $ty
+      where
+        I: AsRef<I> + Into<I>,
+      {
+        batch_impl!($ty);
       }
     )*
   };
 }
 
-impl_batch_for_vec!(::std::vec::Vec<Entry<D>>, ::std::boxed::Box<[Entry<D>]>,);
+impl_batch_for_vec!(::std::vec::Vec<I>, ::std::boxed::Box<[I]>,);
 
 #[cfg(feature = "smallvec-wrapper")]
 mod sw {
@@ -588,53 +612,32 @@ mod sw {
   use super::Entry;
 
   impl_batch_for_vec!(
-    OneOrMore<Entry<D>>,
-    TinyVec<Entry<D>>,
-    TriVec<Entry<D>>,
-    SmallVec<Entry<D>>,
-    MediumVec<Entry<D>>,
-    LargeVec<Entry<D>>,
-    XLargeVec<Entry<D>>,
-    XXLargeVec<Entry<D>>,
-    XXXLargeVec<Entry<D>>,
+    OneOrMore<I>,
+    TinyVec<I>,
+    TriVec<I>,
+    SmallVec<I>,
+    MediumVec<I>,
+    LargeVec<I>,
+    XLargeVec<I>,
+    XXLargeVec<I>,
+    XXXLargeVec<I>,
   );
 }
 
 macro_rules! impl_batch_for_array {
   ($($ty:ty), +$(,)?) => {
     $(
-      impl<D, const N: usize> $crate::Batch<D> for $ty {
-        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
-        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
-
-        #[inline]
-        fn len(&self) -> usize {
-          <[Entry<D>]>::len(self)
-        }
-
-        #[inline]
-        fn is_empty(&self) -> bool {
-          <[Entry<D>]>::is_empty(self)
-        }
-
-        #[inline]
-        fn iter(&self) -> Self::Iter<'_> {
-          <[Entry<D>]>::iter(self)
-        }
-
-        #[inline]
-        fn into_iter(self) -> Self::IntoIter {
-          ::core::iter::IntoIterator::into_iter(self)
-        }
+      impl<I, R, const N: usize> $crate::Batch<I, R> for $ty {
+        batch_impl!($ty);
       }
     )*
   };
 }
 
-impl_batch_for_array!([Entry<D>; N]);
+impl_batch_for_array!([I; N]);
 
 #[cfg(feature = "smallvec")]
-impl_batch_for_array!(::smallvec::SmallVec<[Entry<D>; N]>);
+impl_batch_for_array!(::smallvec::SmallVec<[I; N]>);
 
 #[cfg(feature = "std")]
 #[inline]

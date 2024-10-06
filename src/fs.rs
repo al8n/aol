@@ -44,9 +44,13 @@ pub trait Snapshot: Sized {
 
   /// Validate the batch of entries, return an error if the batch is invalid.
   #[inline]
-  fn validate_batch<B: Batch<Self::Record>>(&self, entries: &B) -> Result<(), Self::Error> {
+  fn validate_batch<I, B>(&self, entries: &B) -> Result<(), Self::Error>
+  where
+    B: Batch<I, Self::Record>,
+    I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
+  {
     for entry in entries.iter() {
-      self.validate(entry)?;
+      self.validate(entry.as_ref())?;
     }
     Ok(())
   }
@@ -55,9 +59,13 @@ pub trait Snapshot: Sized {
   fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
 
   /// Insert a batch of entries.
-  fn insert_batch<B: Batch<Self::Record>>(&mut self, entries: B) -> Result<(), Self::Error> {
+  fn insert_batch<I, B>(&mut self, entries: B) -> Result<(), Self::Error>
+  where
+    B: Batch<I, Self::Record>,
+    I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
+  {
     for entry in entries.into_iter() {
-      self.insert(entry)?;
+      self.insert(entry.into())?;
     }
     Ok(())
   }
@@ -193,6 +201,7 @@ macro_rules! encode_batch {
   ($this:ident($buf:ident, $batch:ident)) => {{
     let mut cursor = 0;
     for ent in $batch.iter() {
+      let ent = ent.as_ref();
       cursor += ent
         .encode(
           ent.data.encoded_size(),
@@ -273,10 +282,14 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
   }
 
   /// Append a batch of entries to the append-only file.
-  pub fn append_batch<B: Batch<S::Record>>(
+  pub fn append_batch<I, B>(
     &mut self,
     batch: B,
-  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
+  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>>
+  where
+    B: Batch<I, S::Record>,
+    I: AsRef<Entry<S::Record>> + Into<Entry<S::Record>>,
+  {
     if batch.is_empty() {
       return Ok(());
     }
@@ -297,13 +310,17 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     self.append_batch_in(batch)
   }
 
-  fn append_batch_in<B: Batch<S::Record>>(
+  fn append_batch_in<I, B>(
     &mut self,
     batch: B,
-  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
+  ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>>
+  where
+    B: Batch<I, S::Record>,
+    I: AsRef<Entry<S::Record>> + Into<Entry<S::Record>>,
+  {
     let total_encoded_size = batch
       .iter()
-      .map(|ent| ent.data.encoded_size())
+      .map(|ent| ent.as_ref().data.encoded_size())
       .fold(batch.len() * FIXED_ENTRY_LEN, |acc, val| acc + val);
 
     // unwrap is ok, because this log cannot be used in concurrent environment

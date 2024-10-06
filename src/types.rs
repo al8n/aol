@@ -10,6 +10,13 @@ pub struct Entry<D> {
   pub(super) data: D,
 }
 
+impl<D> AsRef<Self> for Entry<D> {
+  #[inline]
+  fn as_ref(&self) -> &Self {
+    self
+  }
+}
+
 impl<D> Entry<D> {
   /// Create a new creation entry.
   ///
@@ -77,6 +84,20 @@ impl<D> Entry<D> {
       flag: EntryFlags::deletion_with_custom_flag(flag),
       data,
     }
+  }
+
+  /// Create a new entry with given [`EntryFlags`].
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use aol::{Entry, EntryFlags};
+  ///
+  /// let entry = Entry::with_flags(EntryFlags::creation(), ());
+  /// ```
+  #[inline]
+  pub const fn with_flags(flag: EntryFlags, data: D) -> Self {
+    Self { flag, data }
   }
 
   /// Get the flag.

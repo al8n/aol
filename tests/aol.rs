@@ -260,8 +260,8 @@ fn file_write_large_entry() {
     }
   }
 
-  l.append_batch(vec![]).unwrap();
-  l.append_batch([]).unwrap();
+  l.append_batch::<Entry<Sample>, _>(vec![]).unwrap();
+  l.append_batch::<Entry<Sample>, _>([]).unwrap();
 
   drop(l);
 
