@@ -21,7 +21,7 @@ xxhash64 = ["dbutils/xxhash64"]
 xxhash3 = ["dbutils/xxhash3"]
 
 [dependencies]
-among = { version = "0.1", default-features = false, features = ["either"] }
+among = { version = "^0.1.5", default-features = false, features = ["either"] }
 bitflags = "2"
 crc32fast = "1"
 dbutils = { version = "0.5", default-features = false, features = ["crc32fast"] }
