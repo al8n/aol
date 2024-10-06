@@ -1,5 +1,5 @@
 <div align="center">
-<h1>Manifile</h1>
+<h1>Append Only Log</h1>
 </div>
 
 <div align="center">
@@ -24,7 +24,7 @@ English | [简体中文][zh-cn-url]
 
 ```toml
 [dependencies]
-aol = "0.2"
+aol = "0.3"
 ```
 
 ## File Structure

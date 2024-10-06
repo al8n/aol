@@ -1,5 +1,7 @@
 use among::Among;
 
+use core::fmt::{Debug, Display, Formatter, Result};
+
 /// Errors for append-only file.
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
 pub enum Error {
@@ -28,7 +30,6 @@ pub enum Error {
     /// Found magic.
     found: u16,
   },
-
   /// Corrupted append-only file: entry checksum mismatch.
   #[error("entry checksum mismatch")]
   ChecksumMismatch,
@@ -41,22 +42,14 @@ pub enum Error {
     /// Remaining file size.
     remaining: u32,
   },
-
-  // /// Encode/decode data error.
-  // #[error(transparent)]
-  // Record(<S::Record as Record>::Error),
-
-  // /// Snapshot error.
-  // #[error(transparent)]
-  // Snapshot(S::Error),
   /// I/O error.
   #[error(transparent)]
   IO(#[from] std::io::Error),
 }
 
-impl core::fmt::Debug for Error {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    core::fmt::Display::fmt(self, f)
+impl Debug for Error {
+  fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    Display::fmt(self, f)
   }
 }
 
@@ -92,4 +85,10 @@ impl Error {
   pub(super) const fn corrupted_header<A, B>() -> Among<A, B, Self> {
     Among::Right(Self::CorruptedHeader)
   }
+}
+
+#[cfg(feature = "std")]
+#[inline]
+pub(super) fn read_only_error() -> std::io::Error {
+  std::io::Error::new(std::io::ErrorKind::PermissionDenied, "append log read-only")
 }

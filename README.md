@@ -60,8 +60,12 @@ This crate provides generic purpose append-only log implementation based on `std
 
 ```toml
 [dependencies]
-aol = "0.2"
+aol = "0.3"
 ```
+
+## Example
+
+- [Manifest file for bitcask database](./examples/bitcask_manifest.rs)
 
 #### License
 

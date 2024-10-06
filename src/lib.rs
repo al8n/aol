@@ -20,7 +20,18 @@ use core::mem;
 mod types;
 pub use types::*;
 
-pub use dbutils::*;
+mod impls;
+
+mod snapshot;
+pub use snapshot::*;
+
+pub use dbutils::{checksum, leb128};
+pub use either;
+
+/// A vacant buffer that can be filled with bytes.
+pub mod buffer {
+  pub use dbutils::{buffer::VacantBuffer, error::*};
+}
 
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]
@@ -116,11 +127,11 @@ macro_rules! bits_api {
         /// let flags = CustomFlags::empty();
         ///
         #[doc = concat!("let flags = flags.with_bit", $num, "();")]
+        #[doc = concat!("assert!(flags.bit", $num, "());")]
         /// ```
         #[inline]
-        pub fn [< with_bit $num >] (mut self) -> Self {
-          self.0.insert(CustomFlagsCore::[< BIT $num >]);
-          self
+        pub const fn [< with_bit $num >] (self) -> Self {
+          Self(self.0.union(CustomFlagsCore::[< BIT $num >]))
         }
 
         #[doc = concat!("Clear the bit", $num)]
@@ -497,6 +508,14 @@ impl EntryFlags {
     (self.value & DELETE_FLAG) == 0
   }
 
+  /// Get the underlying bits value.
+  ///
+  /// The returned value is exactly the bits set in this flags value.
+  #[inline]
+  pub const fn bits(&self) -> u8 {
+    self.value
+  }
+
   // Creates a new EntryFlags with initial value (excluding the first bit)
   #[inline]
   const fn new(flag: CustomFlags) -> Self {
@@ -504,140 +523,4 @@ impl EntryFlags {
       value: flag.bits() & MASK,
     }
   }
-}
-
-/// Rewrite policy.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum RewritePolicy {
-  /// Keep all entries which are not marked as deleted. When using this policy,
-  /// after the rewrite, the append-only log will be compacted, which only contains
-  /// the entries that are not marked as deleted.
-  #[default]
-  All,
-  /// Skip the first `usize` entries.
-  /// This policy is useful when you want to keep the latest entries.
-  /// When using this policy, all entries marked as deletion and the first `usize` creation entries will be removed.
-  Skip(usize),
-}
-
-/// A batch of entries.
-pub trait Batch<R> {
-  /// The iterator type which yields references to the entries.
-  type Iter<'a>: Iterator<Item = &'a Entry<R>>
-  where
-    Self: 'a,
-    R: 'a;
-
-  /// The iterator type which yields owned entries.
-  type IntoIter: Iterator<Item = Entry<R>>;
-
-  /// Returns the number of entries in the batch.
-  fn len(&self) -> usize;
-
-  /// Returns `true` if the batch is empty.
-  fn is_empty(&self) -> bool {
-    self.len() == 0
-  }
-
-  /// Returns an iterator which yields references to the entries.
-  fn iter(&self) -> Self::Iter<'_>;
-
-  /// Returns an iterator which yields owned entries.
-  fn into_iter(self) -> Self::IntoIter;
-}
-
-macro_rules! impl_batch_for_vec {
-  ($($ty:ty), +$(,)?) => {
-    $(
-      impl<D> $crate::Batch<D> for $ty {
-        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
-        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
-
-        #[inline]
-        fn len(&self) -> usize {
-          <[Entry<D>]>::len(self)
-        }
-
-        #[inline]
-        fn is_empty(&self) -> bool {
-          <[Entry<D>]>::is_empty(self)
-        }
-
-        #[inline]
-        fn iter(&self) -> Self::Iter<'_> {
-          <[Entry<D>]>::iter(self)
-        }
-
-        #[inline]
-        fn into_iter(self) -> Self::IntoIter {
-          ::core::iter::IntoIterator::into_iter(self)
-        }
-      }
-    )*
-  };
-}
-
-impl_batch_for_vec!(::std::vec::Vec<Entry<D>>, ::std::boxed::Box<[Entry<D>]>,);
-
-#[cfg(feature = "smallvec-wrapper")]
-mod sw {
-  use smallvec_wrapper::*;
-
-  use super::Entry;
-
-  impl_batch_for_vec!(
-    OneOrMore<Entry<D>>,
-    TinyVec<Entry<D>>,
-    TriVec<Entry<D>>,
-    SmallVec<Entry<D>>,
-    MediumVec<Entry<D>>,
-    LargeVec<Entry<D>>,
-    XLargeVec<Entry<D>>,
-    XXLargeVec<Entry<D>>,
-    XXXLargeVec<Entry<D>>,
-  );
-}
-
-macro_rules! impl_batch_for_array {
-  ($($ty:ty), +$(,)?) => {
-    $(
-      impl<D, const N: usize> $crate::Batch<D> for $ty {
-        type Iter<'a> = ::core::slice::Iter<'a, Entry<D>> where D: 'a, Self: 'a;
-        type IntoIter = <$ty as ::core::iter::IntoIterator>::IntoIter;
-
-        #[inline]
-        fn len(&self) -> usize {
-          <[Entry<D>]>::len(self)
-        }
-
-        #[inline]
-        fn is_empty(&self) -> bool {
-          <[Entry<D>]>::is_empty(self)
-        }
-
-        #[inline]
-        fn iter(&self) -> Self::Iter<'_> {
-          <[Entry<D>]>::iter(self)
-        }
-
-        #[inline]
-        fn into_iter(self) -> Self::IntoIter {
-          ::core::iter::IntoIterator::into_iter(self)
-        }
-      }
-    )*
-  };
-}
-
-impl_batch_for_array!([Entry<D>; N]);
-
-#[cfg(feature = "smallvec")]
-impl_batch_for_array!(::smallvec::SmallVec<[Entry<D>; N]>);
-
-#[cfg(feature = "std")]
-#[inline]
-fn read_only_error() -> std::io::Error {
-  std::io::Error::new(std::io::ErrorKind::PermissionDenied, "append log read-only")
 }

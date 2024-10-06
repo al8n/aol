@@ -1,33 +1,51 @@
-use std::fs::OpenOptions;
+use std::convert::Infallible;
 
 use among::Among;
-use aol::{buffer::VacantBuffer, Entry, Record};
+use aol::{
+  buffer::VacantBuffer, checksum::Crc32, Entry, MaybeEntryRef, Options, Record, RecordRef,
+};
+use either::Either;
+use smallvec_wrapper::{
+  LargeVec, MediumVec, OneOrMore, SmallVec, TinyVec, XLargeVec, XXLargeVec, XXXLargeVec,
+};
 
+#[derive(Debug)]
 struct Sample {
   a: u64,
-  data: Vec<u8>,
+  record: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct SampleRef<'a> {
+  a: u64,
+  record: &'a [u8],
+}
+
+impl<'a> RecordRef<'a> for SampleRef<'a> {
+  type Error = Infallible;
+
+  fn decode(buf: &'a [u8]) -> Result<(usize, Self), Self::Error> {
+    let a = u64::from_le_bytes(buf[..8].try_into().unwrap());
+    let len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    let record = &buf[12..12 + len as usize];
+    Ok((12 + len as usize, Self { a, record }))
+  }
 }
 
 impl aol::Record for Sample {
-  type Error = core::convert::Infallible;
+  type Error = Infallible;
+  type Ref<'a> = SampleRef<'a>;
 
   fn encoded_size(&self) -> usize {
-    8 + 4 + self.data.len()
+    8 + 4 + self.record.len()
   }
 
   fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, Self::Error> {
     buf.put_u64_le_unchecked(self.a);
-    let len = self.data.len() as u32;
+    let len = self.record.len() as u32;
     buf.put_u32_le_unchecked(len);
-    buf.put_slice_unchecked(&self.data);
+    buf.put_slice_unchecked(&self.record);
     Ok(12 + len as usize)
-  }
-
-  fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error> {
-    let a = u64::from_le_bytes(buf[..8].try_into().unwrap());
-    let len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-    let data = buf[12..12 + len as usize].to_vec();
-    Ok((12 + len as usize, Self { a, data }))
   }
 }
 
@@ -54,17 +72,48 @@ impl aol::Snapshot for SampleSnapshot {
     self.deletions.len() > 100
   }
 
-  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Self::Error> {
+  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Either<Infallible, Self::Error>> {
     Ok(())
   }
 
-  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
-    if entry.flag().is_creation() {
-      self.creations.push(entry.into_data());
-    } else {
-      self.deletions.push(entry.into_data());
+  fn contains(&self, entry: &Entry<<Self::Record as Record>::Ref<'_>>) -> bool {
+    let flag = entry.flag();
+    if !flag.is_creation() {
+      return false;
     }
-    Ok(())
+    true
+  }
+
+  fn insert(&mut self, entry: MaybeEntryRef<'_, Self::Record>) {
+    let flag = entry.flag();
+    match entry.record() {
+      Either::Left(r) => {
+        if flag.is_creation() {
+          self.creations.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        } else {
+          self.deletions.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        }
+      }
+      Either::Right(r) => {
+        if entry.flag().is_creation() {
+          self.creations.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        } else {
+          self.deletions.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        }
+      }
+    }
   }
 
   fn clear(&mut self) -> Result<(), Self::Error> {
@@ -130,14 +179,14 @@ where
     if i % 3 == 0 {
       l.append(Entry::creation(Sample {
         a: i as u64,
-        data: Vec::new(),
+        record: Vec::new(),
       }))
       .unwrap();
       l.flush_async().unwrap();
     } else if i % 3 == 1 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        data: Vec::new(),
+        record: Vec::new(),
       }))
       .unwrap();
       l.flush().unwrap();
@@ -147,12 +196,12 @@ where
         if j % 2 == 0 {
           batch.push(Entry::creation(Sample {
             a: i as u64,
-            data: Vec::new(),
+            record: Vec::new(),
           }));
         } else {
           batch.push(Entry::deletion(Sample {
             a: i as u64,
-            data: Vec::new(),
+            record: Vec::new(),
           }));
         }
       }
@@ -178,18 +227,28 @@ fn test() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_basic() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs.log");
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+
+  let l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_write(true)
+    .build(&p)
+    .unwrap();
+
   #[cfg(feature = "filelock")]
   l.lock_exclusive().unwrap();
   basic_write_entry(l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let l = Builder::<SampleSnapshot>::default()
+    .with_create(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 10002);
@@ -200,11 +259,16 @@ fn file_basic() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_write_large_entry() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_write_large.log");
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.lock_exclusive().unwrap();
 
@@ -214,14 +278,14 @@ fn file_write_large_entry() {
     if i % 4 == 0 {
       l.append(Entry::creation(Sample {
         a: i as u64,
-        data: vec![0; 128],
+        record: vec![0; 128],
       }))
       .unwrap();
       l.flush_async().unwrap();
     } else if i % 4 == 1 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        data: vec![0; 128],
+        record: vec![0; 128],
       }))
       .unwrap();
       l.flush().unwrap();
@@ -231,12 +295,12 @@ fn file_write_large_entry() {
         if j % 2 == 0 {
           batch.push(Entry::creation(Sample {
             a: i as u64,
-            data: vec![0; 128],
+            record: vec![0; 128],
           }));
         } else {
           batch.push(Entry::deletion(Sample {
             a: i as u64,
-            data: vec![0; 128],
+            record: vec![0; 128],
           }));
         }
       }
@@ -247,11 +311,11 @@ fn file_write_large_entry() {
       let batch = [
         Entry::creation(Sample {
           a: i as u64,
-          data: Vec::new(),
+          record: Vec::new(),
         }),
         Entry::deletion(Sample {
           a: i as u64,
-          data: Vec::new(),
+          record: Vec::new(),
         }),
       ];
 
@@ -260,18 +324,46 @@ fn file_write_large_entry() {
     }
   }
 
-  l.append_batch(vec![]).unwrap();
-  l.append_batch([]).unwrap();
+  l.append_batch::<Entry<Sample>, _>(vec![]).unwrap();
+  l.append_batch::<Entry<Sample>, _>(OneOrMore::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>(TinyVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(SmallVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(MediumVec::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>(LargeVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(XLargeVec::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>(XXLargeVec::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>(XXXLargeVec::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>([]).unwrap();
 
   drop(l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let _l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_create(true)
+    .with_read(true)
+    .with_append(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
-  _l.lock_shared().unwrap();
+  l.lock_shared().unwrap();
   #[cfg(feature = "filelock")]
-  _l.unlock().unwrap();
+  l.unlock().unwrap();
+
+  l.append_batch(SmallVec::from_iter([
+    Entry::creation(Sample {
+      a: 0,
+      record: vec![0; 128],
+    }),
+    Entry::deletion(Sample {
+      a: 0,
+      record: vec![0; 128],
+    }),
+  ]))
+  .unwrap();
 }
 
 fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L)
@@ -283,7 +375,7 @@ where
     if i % 2 == 1 && i < 50 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        data: Vec::new(),
+        record: Vec::new(),
       }))
       .unwrap();
       continue;
@@ -291,7 +383,7 @@ where
 
     l.append(Entry::creation(Sample {
       a: i as u64,
-      data: Vec::new(),
+      record: Vec::new(),
     }))
     .unwrap();
     l.flush_async().unwrap();
@@ -303,22 +395,29 @@ where
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_rewrite_policy_skip() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite_policy_skip.log");
-  let mut l = AppendLog::<SampleSnapshot>::open(
-    &p,
-    (),
-    Options::new().with_rewrite_policy(aol::RewritePolicy::Skip(100)),
-  )
-  .unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_create_new(true)
+    .with_read(true)
+    .with_append(true)
+    .with_rewrite_policy(aol::RewritePolicy::Skip(100))
+    .build(&p)
+    .unwrap();
+
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
 
-  let mut l =
-    AppendLog::<SampleSnapshot>::open(&p, (), Options::new().with_read_only(true)).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_snapshot_options::<SampleSnapshot>(())
+    .with_read(true)
+    .with_read_only(true)
+    .build(&p)
+    .unwrap();
+
   #[cfg(feature = "filelock")]
   l.try_lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 75);
@@ -330,21 +429,63 @@ fn file_rewrite_policy_skip() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn file_rewrite() {
-  use aol::{AppendLog, Options};
+  use aol::Builder;
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite.log");
-  let mut l = AppendLog::<SampleSnapshot>::open(&p, (), Options::new()).unwrap();
+  let l = Builder::<SampleSnapshot>::default()
+    .with_options(Options::new())
+    .with_create_new(true)
+    .with_create(true)
+    .with_sync(true)
+    .with_truncate(true)
+    .with_snapshot_options::<SampleSnapshot>(())
+    .with_read(true)
+    .with_read_only(false)
+    .with_checksumer(Crc32::new())
+    .with_magic_version(0)
+    .with_rewrite_policy(aol::RewritePolicy::All)
+    .with_append(true);
+
+  assert_eq!(l.rewrite_policy(), aol::RewritePolicy::All);
+  assert_eq!(l.magic_version(), 0);
+  assert!(l.read());
+  assert!(l.write());
+  assert!(l.create());
+  assert!(l.create_new());
+  assert!(l.sync());
+  assert!(l.truncate());
+  assert!(l.append());
+  assert!(!l.read_only());
+
+  let mut l = l.build(&p).unwrap();
+  assert_eq!(l.path(), &p);
+  assert_eq!(l.options().magic_version(), 0);
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
 
-  let mut l =
-    AppendLog::<SampleSnapshot>::open(&p, (), Options::new().with_read_only(true)).unwrap();
+  let mut l = Builder::<SampleSnapshot>::default()
+    .with_read(true)
+    .with_read_only(true)
+    .build(&p)
+    .unwrap();
   #[cfg(feature = "filelock")]
   l.try_lock_shared().unwrap();
   assert_eq!(l.snapshot().creations.len(), 175);
   #[cfg(feature = "filelock")]
   l.unlock().unwrap();
   assert!(l.rewrite().is_err());
+}
+
+#[test]
+fn maybe() {
+  let a = MaybeEntryRef::from(Entry::creation(Sample {
+    a: 0,
+    record: vec![0; 128],
+  }));
+
+  assert!(a.flag().is_creation());
+  assert_eq!(a.record().unwrap_right().a, 0);
+  println!("{:?}", a);
 }
