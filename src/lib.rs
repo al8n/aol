@@ -497,6 +497,14 @@ impl EntryFlags {
     (self.value & DELETE_FLAG) == 0
   }
 
+  /// Get the underlying bits value.
+  ///
+  /// The returned value is exactly the bits set in this flags value.
+  #[inline]
+  pub const fn bits(&self) -> u8 {
+    self.value
+  }
+
   // Creates a new EntryFlags with initial value (excluding the first bit)
   #[inline]
   const fn new(flag: CustomFlags) -> Self {
