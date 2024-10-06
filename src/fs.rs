@@ -6,6 +6,7 @@ use std::{
 
 use among::Among;
 use checksum::{BuildChecksumer, Crc32};
+use either::Either;
 
 use super::*;
 
@@ -40,11 +41,17 @@ pub trait Snapshot: Sized {
   fn should_rewrite(&self, size: u64) -> bool;
 
   /// Validate the entry, return an error if the entry is invalid.
-  fn validate(&self, entry: &Entry<Self::Record>) -> Result<(), Self::Error>;
+  fn validate(
+    &self,
+    entry: &Entry<Self::Record>,
+  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>;
 
   /// Validate the batch of entries, return an error if the batch is invalid.
   #[inline]
-  fn validate_batch<I, B>(&self, entries: &B) -> Result<(), Self::Error>
+  fn validate_batch<I, B>(
+    &self,
+    entries: &B,
+  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>
   where
     B: Batch<I, Self::Record>,
     I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
@@ -56,10 +63,16 @@ pub trait Snapshot: Sized {
   }
 
   /// Insert a new entry.
-  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error>;
+  fn insert(
+    &mut self,
+    entry: Entry<Self::Record>,
+  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>;
 
   /// Insert a batch of entries.
-  fn insert_batch<I, B>(&mut self, entries: B) -> Result<(), Self::Error>
+  fn insert_batch<I, B>(
+    &mut self,
+    entries: B,
+  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>
   where
     B: Batch<I, Self::Record>,
     I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
@@ -251,7 +264,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     &mut self,
     entry: Entry<S::Record>,
   ) -> Result<(), Among<<S::Record as Record>::Error, S::Error, Error>> {
-    self.snapshot.validate(&entry).map_err(Among::Middle)?;
+    self.snapshot.validate(&entry)?;
 
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
@@ -277,7 +290,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     )
     .and_then(|len| {
       self.len += len as u64;
-      self.snapshot.insert(entry).map_err(Among::Middle)
+      self.snapshot.insert(entry).map_err(Into::into)
     })
   }
 
@@ -298,10 +311,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       return Err(Error::io(read_only_error()));
     }
 
-    self
-      .snapshot
-      .validate_batch(&batch)
-      .map_err(Among::Middle)?;
+    self.snapshot.validate_batch(&batch)?;
 
     if self.snapshot.should_rewrite(self.len) {
       self.rewrite()?;
@@ -331,7 +341,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       encode_batch!(self(buf, batch));
       file.write_all(&buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self.snapshot.insert_batch(batch).map_err(Among::Middle)?;
+        self.snapshot.insert_batch(batch)?;
         if self.opts.sync_on_write {
           file.flush().map_err(Error::io)
         } else {
@@ -345,7 +355,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
 
       file.write_all(buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self.snapshot.insert_batch(batch).map_err(Among::Middle)?;
+        self.snapshot.insert_batch(batch)?;
         if self.opts.sync_on_write {
           file.flush().map_err(Error::io)
         } else {
@@ -450,7 +460,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         Some(e) => Among::Left(e),
         None => Error::checksum_mismatch(),
       })?;
-      self.snapshot.insert(ent).map_err(Among::Middle)?;
+      self.snapshot.insert(ent)?;
       new_mmap[write_cursor..write_cursor + needed]
         .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
       read_cursor += needed;
@@ -566,7 +576,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         Some(e) => Among::Left(e),
         None => Error::checksum_mismatch(),
       })?;
-      snapshot.insert(ent).map_err(Among::Middle)?;
+      snapshot.insert(ent)?;
       read_cursor += needed;
     }
 

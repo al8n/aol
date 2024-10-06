@@ -1,7 +1,8 @@
-use std::fs::OpenOptions;
+use std::{convert::Infallible, fs::OpenOptions};
 
 use among::Among;
 use aol::{buffer::VacantBuffer, Entry, Record};
+use either::Either;
 
 struct Sample {
   a: u64,
@@ -9,7 +10,7 @@ struct Sample {
 }
 
 impl aol::Record for Sample {
-  type Error = core::convert::Infallible;
+  type Error = Infallible;
 
   fn encoded_size(&self) -> usize {
     8 + 4 + self.data.len()
@@ -54,11 +55,11 @@ impl aol::Snapshot for SampleSnapshot {
     self.deletions.len() > 100
   }
 
-  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Self::Error> {
+  fn validate(&self, _entry: &Entry<Self::Record>) -> Result<(), Either<Infallible, Self::Error>> {
     Ok(())
   }
 
-  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Self::Error> {
+  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Either<Infallible, Self::Error>> {
     if entry.flag().is_creation() {
       self.creations.push(entry.into_data());
     } else {

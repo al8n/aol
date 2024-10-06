@@ -20,7 +20,13 @@ use core::mem;
 mod types;
 pub use types::*;
 
-pub use dbutils::*;
+pub use dbutils::{checksum, leb128};
+pub use either;
+
+/// A vacant buffer that can be filled with bytes.
+pub mod buffer {
+  pub use dbutils::{buffer::VacantBuffer, error::*};
+}
 
 /// Append-only log implementation based on [`std::fs`].
 #[cfg(feature = "std")]

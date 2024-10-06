@@ -1,6 +1,4 @@
-use buffer::VacantBuffer;
-
-use super::*;
+use super::{buffer::VacantBuffer, *};
 
 /// The entry in the append-only file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

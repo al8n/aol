@@ -28,7 +28,6 @@ pub enum Error {
     /// Found magic.
     found: u16,
   },
-
   /// Corrupted append-only file: entry checksum mismatch.
   #[error("entry checksum mismatch")]
   ChecksumMismatch,
@@ -41,14 +40,6 @@ pub enum Error {
     /// Remaining file size.
     remaining: u32,
   },
-
-  // /// Encode/decode data error.
-  // #[error(transparent)]
-  // Record(<S::Record as Record>::Error),
-
-  // /// Snapshot error.
-  // #[error(transparent)]
-  // Snapshot(S::Error),
   /// I/O error.
   #[error(transparent)]
   IO(#[from] std::io::Error),
