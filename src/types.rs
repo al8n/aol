@@ -1,3 +1,5 @@
+use buffer::VacantBuffer;
+
 use super::*;
 
 /// The entry in the append-only file.
@@ -115,7 +117,7 @@ pub trait Record: Sized {
   fn encoded_size(&self) -> usize;
 
   /// Encodes the data into the buffer, returning the number of bytes written.
-  fn encode(&self, buf: &mut [u8]) -> Result<usize, Self::Error>;
+  fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, Self::Error>;
 
   /// Decodes the data from the buffer, returning the number of bytes read.
   fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error>;
@@ -130,7 +132,7 @@ impl Record for () {
   }
 
   #[inline]
-  fn encode(&self, _buf: &mut [u8]) -> Result<usize, Self::Error> {
+  fn encode(&self, _buf: &mut VacantBuffer<'_>) -> Result<usize, Self::Error> {
     Ok(0)
   }
 
@@ -152,14 +154,20 @@ impl<R: Record> Entry<R> {
   where
     C: dbutils::checksum::BuildChecksumer,
   {
+    use core::ptr::NonNull;
+
     let mut cursor = 0;
     buf[cursor] = self.flag.value;
     cursor += 1;
     buf[cursor..cursor + LEN_BUF_SIZE].copy_from_slice(&(data_encoded_len as u32).to_le_bytes());
     cursor += LEN_BUF_SIZE;
-    let encoded = self
-      .data
-      .encode(&mut buf[cursor..cursor + data_encoded_len])?;
+    let mut vb = unsafe {
+      VacantBuffer::new(
+        data_encoded_len,
+        NonNull::new_unchecked(buf.as_mut_ptr().add(cursor)),
+      )
+    };
+    let encoded = self.data.encode(&mut vb)?;
     debug_assert_eq!(
       data_encoded_len, encoded,
       "invalid data encoded size, expected {} got {}",

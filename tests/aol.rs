@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 
 use among::Among;
-use aol::{Entry, Record};
+use aol::{buffer::VacantBuffer, Entry, Record};
 
 struct Sample {
   a: u64,
@@ -15,12 +15,11 @@ impl aol::Record for Sample {
     8 + 4 + self.data.len()
   }
 
-  fn encode(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-    buf[..8].copy_from_slice(&self.a.to_le_bytes());
-
+  fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, Self::Error> {
+    buf.put_u64_le_unchecked(self.a);
     let len = self.data.len() as u32;
-    buf[8..12].copy_from_slice(&len.to_le_bytes());
-    buf[12..12 + len as usize].copy_from_slice(&self.data);
+    buf.put_u32_le_unchecked(len);
+    buf.put_slice_unchecked(&self.data);
     Ok(12 + len as usize)
   }
 
