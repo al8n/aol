@@ -1,8 +1,9 @@
-use std::{convert::Infallible, fs::OpenOptions};
+use std::convert::Infallible;
 
 use among::Among;
 use aol::{buffer::VacantBuffer, Entry, MaybeEntryRef, Record, RecordRef};
 use either::Either;
+use smallvec_wrapper::{LargeVec, MediumVec, OneOrMore, SmallVec, TinyVec, XLargeVec, XXLargeVec, XXXLargeVec};
 
 #[derive(Debug)]
 struct Sample {
@@ -321,22 +322,39 @@ fn file_write_large_entry() {
   }
 
   l.append_batch::<Entry<Sample>, _>(vec![]).unwrap();
+  l.append_batch::<Entry<Sample>, _>(OneOrMore::new()).unwrap(); 
+  l.append_batch::<Entry<Sample>, _>(TinyVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(SmallVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(MediumVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(LargeVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(XLargeVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(XXLargeVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(XXXLargeVec::new()).unwrap();
   l.append_batch::<Entry<Sample>, _>([]).unwrap();
 
   drop(l);
 
-  let mut open_opts = OpenOptions::new();
-  open_opts.read(true).create(true).append(true);
-  let _l = Builder::<SampleSnapshot>::default()
+  let mut l = Builder::<SampleSnapshot>::default()
     .with_create(true)
     .with_read(true)
     .with_append(true)
     .build(&p)
     .unwrap();
   #[cfg(feature = "filelock")]
-  _l.lock_shared().unwrap();
+  l.lock_shared().unwrap();
   #[cfg(feature = "filelock")]
-  _l.unlock().unwrap();
+  l.unlock().unwrap();
+
+  l.append_batch(SmallVec::from_iter(
+    [Entry::creation(Sample {
+      a: 0,
+      record: vec![0; 128],
+    }),
+    Entry::deletion(Sample {
+      a: 0,
+      record: vec![0; 128],
+    })],
+  )).unwrap();
 }
 
 fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L)

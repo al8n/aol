@@ -44,7 +44,12 @@ tracing = { version = "0.1", optional = true }
 [[test]]
 name = "aol"
 path = "tests/aol.rs"
-required-features = ["std", "tracing"]
+required-features = ["std", "tracing", "smallvec-wrapper"]
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["std", "tracing", "smallvec-wrapper"]
 
 [[example]]
 name = "bitcask_manifest"
