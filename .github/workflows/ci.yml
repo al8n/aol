@@ -253,9 +253,7 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     needs:
-      - rustfmt
       - sanitizer
-      - clippy
       - build
       - valgrind
       - test
