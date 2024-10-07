@@ -282,7 +282,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: tarpaulin
-          args: --all-features --run-types tests --run-types doctests --run-types examples --workspace --out xml
+          args: --all-features --run-types Tests --run-types Doctests --run-types Examples --workspace --out xml
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4
         with:
