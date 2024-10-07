@@ -384,6 +384,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       return Err(Error::io(read_only_error()));
     }
 
+    #[cfg(feature = "tracing")]
     tracing::info!(path = %self.path().display(), "start rewrite append-only log");
 
     let mut new_snapshot = S::new(self.snapshot_opts.clone()).map_err(Among::Middle)?;
@@ -496,6 +497,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       .len();
     self.len = len;
     self.snapshot = new_snapshot;
+    #[cfg(feature = "tracing")]
     tracing::info!(path = %self.path().display(), "finish rewrite append-only log");
     Ok(())
   }

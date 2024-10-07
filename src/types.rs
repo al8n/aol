@@ -49,11 +49,13 @@ impl<'a, R: Record> MaybeEntryRef<'a, R> {
     }
   }
 
+  #[cfg(feature = "std")]
   #[inline]
   pub(crate) fn left(ent: Entry<R::Ref<'a>>) -> Self {
     Self(Either::Left(ent))
   }
 
+  #[cfg(feature = "std")]
   #[inline]
   pub(crate) fn right(ent: Entry<R>) -> Self {
     Self(Either::Right(ent))
