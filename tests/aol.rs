@@ -1,7 +1,9 @@
 use std::convert::Infallible;
 
 use among::Among;
-use aol::{buffer::VacantBuffer, Entry, MaybeEntryRef, Record, RecordRef};
+use aol::{
+  buffer::VacantBuffer, checksum::Crc32, Entry, MaybeEntryRef, Options, Record, RecordRef,
+};
 use either::Either;
 use smallvec_wrapper::{
   LargeVec, MediumVec, OneOrMore, SmallVec, TinyVec, XLargeVec, XXLargeVec, XXXLargeVec,
@@ -83,10 +85,10 @@ impl aol::Snapshot for SampleSnapshot {
   }
 
   fn insert(&mut self, entry: MaybeEntryRef<'_, Self::Record>) {
-    match entry.into_inner() {
-      Either::Left(entry) => {
-        let r = entry.record();
-        if entry.flag().is_creation() {
+    let flag = entry.flag();
+    match entry.record() {
+      Either::Left(r) => {
+        if flag.is_creation() {
           self.creations.push(Sample {
             a: r.a,
             record: r.record.to_vec(),
@@ -98,8 +100,7 @@ impl aol::Snapshot for SampleSnapshot {
           });
         }
       }
-      Either::Right(entry) => {
-        let r = entry.record();
+      Either::Right(r) => {
         if entry.flag().is_creation() {
           self.creations.push(Sample {
             a: r.a,
@@ -432,12 +433,34 @@ fn file_rewrite() {
 
   let dir = tempfile::tempdir().unwrap();
   let p = dir.path().join("fs_rewrite.log");
-  let mut l = Builder::<SampleSnapshot>::default()
+  let l = Builder::<SampleSnapshot>::default()
+    .with_options(Options::new())
     .with_create_new(true)
+    .with_create(true)
+    .with_sync(true)
+    .with_truncate(true)
+    .with_snapshot_options::<SampleSnapshot>(())
     .with_read(true)
-    .with_append(true)
-    .build(&p)
-    .unwrap();
+    .with_read_only(false)
+    .with_checksumer(Crc32::new())
+    .with_magic_version(0)
+    .with_rewrite_policy(aol::RewritePolicy::All)
+    .with_append(true);
+
+  assert_eq!(l.rewrite_policy(), aol::RewritePolicy::All);
+  assert_eq!(l.magic_version(), 0);
+  assert!(l.read());
+  assert!(l.write());
+  assert!(l.create());
+  assert!(l.create_new());
+  assert!(l.sync());
+  assert!(l.truncate());
+  assert!(l.append());
+  assert!(!l.read_only());
+
+  let mut l = l.build(&p).unwrap();
+  assert_eq!(l.path(), &p);
+  assert_eq!(l.options().magic_version(), 0);
   #[cfg(feature = "filelock")]
   l.try_lock_exclusive().unwrap();
   rewrite(&mut l);
@@ -453,4 +476,16 @@ fn file_rewrite() {
   #[cfg(feature = "filelock")]
   l.unlock().unwrap();
   assert!(l.rewrite().is_err());
+}
+
+#[test]
+fn maybe() {
+  let a = MaybeEntryRef::from(Entry::creation(Sample {
+    a: 0,
+    record: vec![0; 128],
+  }));
+
+  assert!(a.flag().is_creation());
+  assert_eq!(a.record().unwrap_right().a, 0);
+  println!("{:?}", a);
 }

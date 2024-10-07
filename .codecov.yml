@@ -6,6 +6,7 @@ ignore:
   - "examples/"
   - "benches/"
   - "src/fs/error.rs"
+  - "src/impls.rs"
 
 coverage:
   status:

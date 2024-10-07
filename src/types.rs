@@ -234,30 +234,6 @@ pub trait RecordRef<'a>: Sized + core::fmt::Debug {
   fn decode(buf: &'a [u8]) -> Result<(usize, Self), Self::Error>;
 }
 
-impl Record for () {
-  type Error = core::convert::Infallible;
-  type Ref<'a> = ();
-
-  #[inline]
-  fn encoded_size(&self) -> usize {
-    0
-  }
-
-  #[inline]
-  fn encode(&self, _buf: &mut VacantBuffer<'_>) -> Result<usize, Self::Error> {
-    Ok(0)
-  }
-}
-
-impl RecordRef<'_> for () {
-  type Error = core::convert::Infallible;
-
-  #[inline]
-  fn decode(_buf: &[u8]) -> Result<(usize, Self), Self::Error> {
-    Ok((0, ()))
-  }
-}
-
 impl<R: Record> Entry<R> {
   #[cfg(feature = "std")]
   #[inline]

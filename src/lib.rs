@@ -20,6 +20,8 @@ use core::mem;
 mod types;
 pub use types::*;
 
+mod impls;
+
 pub use dbutils::{checksum, leb128};
 pub use either;
 
