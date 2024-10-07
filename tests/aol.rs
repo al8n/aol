@@ -4,11 +4,13 @@ use among::Among;
 use aol::{buffer::VacantBuffer, Entry, MaybeEntryRef, Record, RecordRef};
 use either::Either;
 
+#[derive(Debug)]
 struct Sample {
   a: u64,
   record: Vec<u8>,
 }
 
+#[derive(Debug)]
 struct SampleRef<'a> {
   a: u64,
   record: &'a [u8],
@@ -71,11 +73,10 @@ impl aol::Snapshot for SampleSnapshot {
 
   fn contains(&self, entry: &Entry<<Self::Record as Record>::Ref<'_>>) -> bool {
     let flag = entry.flag();
-    if flag.is_creation() {
-      self.creations.iter().any(|x| x.a == entry.record().a)
-    } else {
-      self.deletions.iter().any(|x| x.a == entry.record().a)
+    if !flag.is_creation() {
+      return false;
     }
+    true
   }
 
   fn insert(&mut self, entry: MaybeEntryRef<'_, Self::Record>) {

@@ -5,6 +5,22 @@ use super::{buffer::VacantBuffer, *};
 /// Maybe a reference entry type or an owned entry.
 pub struct MaybeEntryRef<'a, R: Record>(Either<Entry<R::Ref<'a>>, Entry<R>>);
 
+impl<R: Record> core::fmt::Debug for MaybeEntryRef<'_, R> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    match &self.0 {
+      Either::Left(entry) => f.debug_tuple("MaybeEntryRef::Ref").field(entry).finish(),
+      Either::Right(entry) => f.debug_tuple("MaybeEntryRef::Owned").field(entry).finish(),
+    }
+  }
+}
+
+impl<R: Record> From<Entry<R>> for MaybeEntryRef<'_, R> {
+  #[inline]
+  fn from(entry: Entry<R>) -> Self {
+    Self(Either::Right(entry))
+  }
+}
+
 impl<'a, R: Record> MaybeEntryRef<'a, R> {
   /// Get the flag.
   #[inline]
@@ -158,6 +174,27 @@ impl<R> Entry<R> {
     self.flag
   }
 
+  /// Maps an `Entry<T>` to `Entry<U>` by applying a function to a contained value.
+  ///
+  /// ## Example
+  ///
+  /// ```rust
+  /// use aol::Entry;
+  ///
+  /// let entry = Entry::<u32>::creation(0);
+  /// let entry = entry.map(|x| x as u64);
+  /// ```
+  #[inline]
+  pub fn map<F, T>(self, f: F) -> Entry<T>
+  where
+    F: FnOnce(R) -> T,
+  {
+    Entry {
+      flag: self.flag,
+      data: f(self.data),
+    }
+  }
+
   /// Get the record.
   #[inline]
   pub const fn record(&self) -> &R {
@@ -172,7 +209,7 @@ impl<R> Entry<R> {
 }
 
 /// Record for the [`Entry`].
-pub trait Record: Sized {
+pub trait Record: Sized + core::fmt::Debug {
   /// The error type returned by encoding.
   type Error;
 
@@ -187,7 +224,7 @@ pub trait Record: Sized {
 }
 
 /// The reference type for the record.
-pub trait RecordRef<'a>: Sized {
+pub trait RecordRef<'a>: Sized + core::fmt::Debug {
   /// The error type returned.
   type Error;
 

@@ -1,7 +1,8 @@
-# UNRELEASED
+# Releases
 
-# 0.1.2 (January 6th, 2022)
+## 0.3.0 (Oct 8th, 2024)
+
+- Redesign `Record` and `Snapshot` traits to avoid unnecessary allocation.
+- Add `tracing` feature
 
 FEATURES
-
-

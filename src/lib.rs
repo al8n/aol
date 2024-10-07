@@ -532,7 +532,10 @@ pub enum RewritePolicy {
   All,
   /// Skip the first `usize` entries.
   /// This policy is useful when you want to keep the latest entries.
-  /// When using this policy, the first `usize` entries will be removed.
+  ///
+  /// e.g. If the a log contains 10 entries, and you set the policy to `Skip(5)`,
+  /// and the first 3 entries are marked as deleted, the remaining is in good state,
+  /// after the rewrite, the log will only contain 2 entries.
   Skip(usize),
 }
 

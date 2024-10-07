@@ -384,6 +384,8 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       return Err(Error::io(read_only_error()));
     }
 
+    tracing::info!(path = %self.path().display(), "start rewrite append-only log");
+
     let mut new_snapshot = S::new(self.snapshot_opts.clone()).map_err(Among::Middle)?;
     let old_file = self.file.take().unwrap();
 
@@ -409,28 +411,12 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     let mut read_cursor = HEADER_SIZE;
     let mut write_cursor = HEADER_SIZE;
 
-    match self.opts.rewrite_policy {
-      RewritePolicy::All => {}
-      RewritePolicy::Skip(n) => {
-        let mut skipped = 0;
-        loop {
-          if skipped == n {
-            break;
-          }
+    let skip = match self.opts.rewrite_policy {
+      RewritePolicy::All => 0,
+      RewritePolicy::Skip(n) => n,
+    };
 
-          if read_cursor + ENTRY_HEADER_SIZE > old_mmap.len() {
-            break;
-          }
-
-          let mut header_buf = [0; ENTRY_HEADER_SIZE];
-          header_buf.copy_from_slice(&old_mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
-
-          let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
-          skipped += 1;
-          read_cursor += FIXED_ENTRY_LEN + len;
-        }
-      }
-    }
+    let mut skipped = 0;
 
     loop {
       if read_cursor + ENTRY_HEADER_SIZE > old_mmap.len() {
@@ -460,6 +446,17 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       })?;
 
       if !self.snapshot.contains(&ent) {
+        read_cursor += FIXED_ENTRY_LEN + encoded_data_len;
+        #[cfg(feature = "tracing")]
+        tracing::trace!(ent = ?ent, "removing tombstone entry");
+        continue;
+      }
+
+      if skip > 0 && skipped < skip {
+        #[cfg(feature = "tracing")]
+        tracing::trace!(ent = ?ent, "skipping entry");
+
+        skipped += 1;
         read_cursor += FIXED_ENTRY_LEN + encoded_data_len;
         continue;
       }
@@ -499,6 +496,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       .len();
     self.len = len;
     self.snapshot = new_snapshot;
+    tracing::info!(path = %self.path().display(), "finish rewrite append-only log");
     Ok(())
   }
 

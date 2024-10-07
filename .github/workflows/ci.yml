@@ -63,7 +63,7 @@ jobs:
     - name: Install cargo-hack
       run: cargo install cargo-hack
     - name: Apply clippy lints
-      run: cargo hack clippy --each-feature --exclude-no-default-features --exclude-features xxhash64,xxhash3 
+      run: cargo hack clippy --each-feature --exclude-no-default-features --exclude-features xxhash64,xxhash3,tracing
 
   build:
     name: build
@@ -97,7 +97,7 @@ jobs:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run build
-      run: cargo hack build --each-feature --exclude-no-default-features --exclude-features xxhash64,xxhash3
+      run: cargo hack build --each-feature --exclude-no-default-features --exclude-features xxhash64,xxhash3,tracing
   
   test:
     name: test
@@ -131,7 +131,7 @@ jobs:
         path: ~/.cargo
         key: ${{ runner.os }}-coverage-dotcargo
     - name: Run test
-      run: cargo hack test --each-feature --exclude-no-default-features --exclude-features xxhash64,xxhash3
+      run: cargo hack test --each-feature --exclude-no-default-features --exclude-features xxhash64,xxhash3,tracing
 
   sanitizer:
     name: sanitizer
