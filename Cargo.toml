@@ -11,6 +11,9 @@ categories = ["data-structures", "database-implementations", "development-tools"
 keywords = ["log", "append-only", "append-only-log", "database", "manifest"]
 rust-version = "1.81.0"
 
+[workspace]
+exclude = ["integration"]
+
 [features]
 default = ["std", "either/default", "among/default"]
 alloc = ["dbutils/alloc"]
@@ -43,8 +46,15 @@ name = "aol"
 path = "tests/aol.rs"
 required-features = ["std", "tracing"]
 
+[[example]]
+name = "bitcask_manifest"
+path = "examples/bitcask_manifest.rs"
+required-features = ["std", "tracing", "smallvec-wrapper"]
+
 [dev-dependencies]
 tempfile = "3"
+derive_more = "0.99"
+smol_str = "0.3"
 
 [package.metadata.docs.rs]
 all-features = true

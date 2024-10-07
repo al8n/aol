@@ -160,10 +160,6 @@ jobs:
         run: rustup component add rust-src
       - name: ASAN / LSAN / MSAN (Linux)
         run: ci/sanitizer.sh
-        if: matrix.os == 'ubuntu-latest'
-      - name: ASAN / LSAN / MSAN
-        run: ci/sanitizer_generic.sh
-        if: matrix.os != 'ubuntu-latest'
 
   miri-tb:
     name: miri-tb
@@ -190,10 +186,6 @@ jobs:
         run: cargo install cargo-hack
       - name: Miri (Linux)
         run: ci/miri_tb.sh
-        if: matrix.os == 'ubuntu-latest'
-      - name: Miri
-        run: ci/miri_tb_generic.sh
-        if: matrix.os != 'ubuntu-latest'
 
   miri-sb:
     name: miri-sb
@@ -220,10 +212,42 @@ jobs:
         run: cargo install cargo-hack
       - name: Miri (Linux)
         run: ci/miri_sb.sh
-        if: matrix.os == 'ubuntu-latest'
-      - name: Miri
-        run: ci/miri_sb_generic.sh
-        if: matrix.os != 'ubuntu-latest'
+
+  # valgrind
+  valgrind:
+    name: valgrind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Cache cargo build and registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-latest-valgrind-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ubuntu-latest-valgrind-
+
+      - name: Install Rust ${{ env.stable }}
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: ${{ env.stable }}
+            override: true
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y valgrind
+      # Compile tests
+      - name: build integration
+        run: cargo build --release
+        working-directory: integration
+
+      # Run with valgrind
+      - name: Run valgrind foo
+        run: valgrind --error-exitcode=1 --leak-check=full --show-leak-kinds=all ./target/release/integration
+        working-directory: integration
 
   coverage:
     name: coverage
@@ -233,6 +257,7 @@ jobs:
       - sanitizer
       - clippy
       - build
+      - valgrind
       - test
     steps:
       - uses: actions/checkout@v3
@@ -259,7 +284,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: tarpaulin
-          args: --all-features --run-types tests --run-types doctests --workspace --out xml
+          args: --all-features --run-types tests --run-types doctests --run-types examples --workspace --out xml
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v4
         with:

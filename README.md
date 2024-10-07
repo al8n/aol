@@ -63,6 +63,10 @@ This crate provides generic purpose append-only log implementation based on `std
 aol = "0.3"
 ```
 
+## Example
+
+- [Manifest file for bitcask database](./examples/bitcask_manifest.rs)
+
 #### License
 
 `aol` is under the terms of both the MIT license and the
