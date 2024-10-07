@@ -1,34 +1,44 @@
 use std::{convert::Infallible, fs::OpenOptions};
 
 use among::Among;
-use aol::{buffer::VacantBuffer, Entry, Record};
+use aol::{buffer::VacantBuffer, Entry, MaybeEntryRef, Record, RecordRef};
 use either::Either;
 
 struct Sample {
   a: u64,
-  data: Vec<u8>,
+  record: Vec<u8>,
+}
+
+struct SampleRef<'a> {
+  a: u64,
+  record: &'a [u8],
+}
+
+impl<'a> RecordRef<'a> for SampleRef<'a> {
+  type Error = Infallible;
+
+  fn decode(buf: &'a [u8]) -> Result<(usize, Self), Self::Error> {
+    let a = u64::from_le_bytes(buf[..8].try_into().unwrap());
+    let len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+    let record = &buf[12..12 + len as usize];
+    Ok((12 + len as usize, Self { a, record }))
+  }
 }
 
 impl aol::Record for Sample {
   type Error = Infallible;
+  type Ref<'a> = SampleRef<'a>;
 
   fn encoded_size(&self) -> usize {
-    8 + 4 + self.data.len()
+    8 + 4 + self.record.len()
   }
 
   fn encode(&self, buf: &mut VacantBuffer<'_>) -> Result<usize, Self::Error> {
     buf.put_u64_le_unchecked(self.a);
-    let len = self.data.len() as u32;
+    let len = self.record.len() as u32;
     buf.put_u32_le_unchecked(len);
-    buf.put_slice_unchecked(&self.data);
+    buf.put_slice_unchecked(&self.record);
     Ok(12 + len as usize)
-  }
-
-  fn decode(buf: &[u8]) -> Result<(usize, Self), Self::Error> {
-    let a = u64::from_le_bytes(buf[..8].try_into().unwrap());
-    let len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
-    let data = buf[12..12 + len as usize].to_vec();
-    Ok((12 + len as usize, Self { a, data }))
   }
 }
 
@@ -59,11 +69,45 @@ impl aol::Snapshot for SampleSnapshot {
     Ok(())
   }
 
-  fn insert(&mut self, entry: Entry<Self::Record>) {
-    if entry.flag().is_creation() {
-      self.creations.push(entry.into_data());
+  fn contains(&self, entry: &Entry<<Self::Record as Record>::Ref<'_>>) -> bool {
+    let flag = entry.flag();
+    if flag.is_creation() {
+      self.creations.iter().any(|x| x.a == entry.record().a)
     } else {
-      self.deletions.push(entry.into_data());
+      self.deletions.iter().any(|x| x.a == entry.record().a)
+    }
+  }
+
+  fn insert(&mut self, entry: MaybeEntryRef<'_, Self::Record>) {
+    match entry.into_inner() {
+      Either::Left(entry) => {
+        let r = entry.record();
+        if entry.flag().is_creation() {
+          self.creations.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        } else {
+          self.deletions.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        }
+      }
+      Either::Right(entry) => {
+        let r = entry.record();
+        if entry.flag().is_creation() {
+          self.creations.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        } else {
+          self.deletions.push(Sample {
+            a: r.a,
+            record: r.record.to_vec(),
+          });
+        }
+      }
     }
   }
 
@@ -130,14 +174,14 @@ where
     if i % 3 == 0 {
       l.append(Entry::creation(Sample {
         a: i as u64,
-        data: Vec::new(),
+        record: Vec::new(),
       }))
       .unwrap();
       l.flush_async().unwrap();
     } else if i % 3 == 1 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        data: Vec::new(),
+        record: Vec::new(),
       }))
       .unwrap();
       l.flush().unwrap();
@@ -147,12 +191,12 @@ where
         if j % 2 == 0 {
           batch.push(Entry::creation(Sample {
             a: i as u64,
-            data: Vec::new(),
+            record: Vec::new(),
           }));
         } else {
           batch.push(Entry::deletion(Sample {
             a: i as u64,
-            data: Vec::new(),
+            record: Vec::new(),
           }));
         }
       }
@@ -229,14 +273,14 @@ fn file_write_large_entry() {
     if i % 4 == 0 {
       l.append(Entry::creation(Sample {
         a: i as u64,
-        data: vec![0; 128],
+        record: vec![0; 128],
       }))
       .unwrap();
       l.flush_async().unwrap();
     } else if i % 4 == 1 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        data: vec![0; 128],
+        record: vec![0; 128],
       }))
       .unwrap();
       l.flush().unwrap();
@@ -246,12 +290,12 @@ fn file_write_large_entry() {
         if j % 2 == 0 {
           batch.push(Entry::creation(Sample {
             a: i as u64,
-            data: vec![0; 128],
+            record: vec![0; 128],
           }));
         } else {
           batch.push(Entry::deletion(Sample {
             a: i as u64,
-            data: vec![0; 128],
+            record: vec![0; 128],
           }));
         }
       }
@@ -262,11 +306,11 @@ fn file_write_large_entry() {
       let batch = [
         Entry::creation(Sample {
           a: i as u64,
-          data: Vec::new(),
+          record: Vec::new(),
         }),
         Entry::deletion(Sample {
           a: i as u64,
-          data: Vec::new(),
+          record: Vec::new(),
         }),
       ];
 
@@ -303,7 +347,7 @@ where
     if i % 2 == 1 && i < 50 {
       l.append(Entry::deletion(Sample {
         a: i as u64,
-        data: Vec::new(),
+        record: Vec::new(),
       }))
       .unwrap();
       continue;
@@ -311,7 +355,7 @@ where
 
     l.append(Entry::creation(Sample {
       a: i as u64,
-      data: Vec::new(),
+      record: Vec::new(),
     }))
     .unwrap();
     l.flush_async().unwrap();

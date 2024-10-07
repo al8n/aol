@@ -1,5 +1,7 @@
 use among::Among;
 
+use core::fmt::{Debug, Display, Formatter, Result};
+
 /// Errors for append-only file.
 #[cfg_attr(feature = "std", derive(thiserror::Error))]
 pub enum Error {
@@ -45,9 +47,9 @@ pub enum Error {
   IO(#[from] std::io::Error),
 }
 
-impl core::fmt::Debug for Error {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    core::fmt::Display::fmt(self, f)
+impl Debug for Error {
+  fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+    Display::fmt(self, f)
   }
 }
 

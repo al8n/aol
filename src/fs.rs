@@ -31,7 +31,7 @@ pub trait Snapshot: Sized {
   type Record: Record;
 
   /// The options type used to create a new snapshot.
-  type Options;
+  type Options: Clone;
 
   /// The error type.
   type Error;
@@ -70,10 +70,13 @@ pub trait Snapshot: Sized {
     Ok(())
   }
 
+  /// Returns `true` if the current snapshot contains the entry.
+  fn contains(&self, entry: &Entry<<Self::Record as Record>::Ref<'_>>) -> bool;
+
   /// Insert a new entry.
   ///
   /// Inserting an entry should not fail, the validation should be done in the [`validate`](Snapshot::validate) method.
-  fn insert(&mut self, entry: Entry<Self::Record>);
+  fn insert(&mut self, entry: MaybeEntryRef<'_, Self::Record>);
 
   /// Insert a batch of entries.
   ///
@@ -84,7 +87,7 @@ pub trait Snapshot: Sized {
     I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
   {
     for entry in entries.into_iter() {
-      self.insert(entry.into());
+      self.insert(MaybeEntryRef::right(entry.into()));
     }
   }
 
@@ -118,7 +121,12 @@ impl Snapshot for () {
   }
 
   #[inline]
-  fn insert(&mut self, _entry: Entry<Self::Record>) {}
+  fn contains(&self, _entry: &Entry<<Self::Record as Record>::Ref<'_>>) -> bool {
+    true
+  }
+
+  #[inline]
+  fn insert(&mut self, _entry: MaybeEntryRef<'_, Self::Record>) {}
 
   #[inline]
   fn clear(&mut self) -> Result<(), Self::Error> {
@@ -128,8 +136,12 @@ impl Snapshot for () {
 
 /// Append-only log implementation based on [`std::fs::File`].
 #[derive(Debug)]
-pub struct AppendLog<S, C = Crc32> {
+pub struct AppendLog<S, C = Crc32>
+where
+  S: Snapshot,
+{
   opts: Options,
+  snapshot_opts: S::Options,
   filename: PathBuf,
   rewrite_filename: PathBuf,
   file: Option<File>,
@@ -138,7 +150,10 @@ pub struct AppendLog<S, C = Crc32> {
   checksumer: C,
 }
 
-impl<S, C> AppendLog<S, C> {
+impl<S, C> AppendLog<S, C>
+where
+  S: Snapshot,
+{
   /// Returns the options of the append only log.
   #[inline]
   pub const fn options(&self) -> &Options {
@@ -288,7 +303,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
     )
     .map(|len| {
       self.len += len as u64;
-      self.snapshot.insert(entry)
+      self.snapshot.insert(MaybeEntryRef::right(entry));
     })
   }
 
@@ -369,8 +384,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       return Err(Error::io(read_only_error()));
     }
 
-    self.snapshot.clear().map_err(Among::Middle)?;
-
+    let mut new_snapshot = S::new(self.snapshot_opts.clone()).map_err(Among::Middle)?;
     let old_file = self.file.take().unwrap();
 
     let mut new_file = OpenOptions::new()
@@ -412,14 +426,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
           header_buf.copy_from_slice(&old_mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
 
           let len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
-          let flag = EntryFlags {
-            value: header_buf[0],
-          };
-
-          if !flag.is_deletion() {
-            skipped += 1;
-          }
-
+          skipped += 1;
           read_cursor += FIXED_ENTRY_LEN + len;
         }
       }
@@ -434,13 +441,6 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       header_buf.copy_from_slice(&old_mmap[read_cursor..read_cursor + ENTRY_HEADER_SIZE]);
 
       let encoded_data_len = u32::from_le_bytes(header_buf[1..].try_into().unwrap()) as usize;
-      let flag = EntryFlags {
-        value: header_buf[0],
-      };
-      if flag.is_deletion() {
-        read_cursor += FIXED_ENTRY_LEN + encoded_data_len;
-        continue;
-      }
 
       let entry_size = FIXED_ENTRY_LEN + encoded_data_len;
 
@@ -450,7 +450,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
 
-      let (_readed, ent) = Entry::decode(
+      let (_readed, ent) = Entry::<S::Record>::decode(
         &old_mmap[read_cursor..read_cursor + entry_size],
         &self.checksumer,
       )
@@ -458,7 +458,14 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         Some(e) => Among::Left(e),
         None => Error::checksum_mismatch(),
       })?;
-      self.snapshot.insert(ent);
+
+      if !self.snapshot.contains(&ent) {
+        read_cursor += FIXED_ENTRY_LEN + encoded_data_len;
+        continue;
+      }
+
+      new_snapshot.insert(MaybeEntryRef::left(ent));
+
       new_mmap[write_cursor..write_cursor + needed]
         .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
       read_cursor += needed;
@@ -491,6 +498,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       .map_err(Error::io)?
       .len();
     self.len = len;
+    self.snapshot = new_snapshot;
     Ok(())
   }
 
@@ -518,7 +526,8 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         filename,
         rewrite_filename,
         file: Some(file),
-        snapshot: S::new(snapshot_opts).map_err(Among::Middle)?,
+        snapshot: S::new(snapshot_opts.clone()).map_err(Among::Middle)?,
+        snapshot_opts,
         checksumer: cks,
         opts,
         len: HEADER_SIZE as u64,
@@ -553,7 +562,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       return Err(Error::bad_magic(CURRENT_VERSION, version));
     }
 
-    let mut snapshot = S::new(snapshot_opts).map_err(Among::Middle)?;
+    let mut snapshot = S::new(snapshot_opts.clone()).map_err(Among::Middle)?;
 
     let mut read_cursor = HEADER_SIZE;
 
@@ -573,23 +582,30 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         return Err(Error::entry_corrupted(needed as u32, remaining as u32));
       }
 
-      let res = Entry::decode(&mmap[read_cursor..read_cursor + entry_size], &cks);
+      let res = Entry::<S::Record>::decode(&mmap[read_cursor..read_cursor + entry_size], &cks);
       let (_, ent) = res.map_err(|e| match e {
         Some(e) => Among::Left(e),
         None => Error::checksum_mismatch(),
       })?;
-      snapshot.insert(ent);
+      snapshot.insert(MaybeEntryRef::left(ent));
       read_cursor += needed;
     }
 
     drop(mmap);
+
+    let read_cursor = read_cursor as u64;
+    // we have partially written entry, just discard it
+    if read_cursor != size {
+      file.set_len(read_cursor).map_err(Error::io)?;
+    }
 
     let mut this = Self {
       filename,
       rewrite_filename,
       file: Some(file),
       snapshot,
-      len: size,
+      snapshot_opts,
+      len: read_cursor,
       checksumer: cks,
       opts,
     };

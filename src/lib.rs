@@ -532,7 +532,7 @@ pub enum RewritePolicy {
   All,
   /// Skip the first `usize` entries.
   /// This policy is useful when you want to keep the latest entries.
-  /// When using this policy, all entries marked as deletion and the first `usize` creation entries will be removed.
+  /// When using this policy, the first `usize` entries will be removed.
   Skip(usize),
 }
 
