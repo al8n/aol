@@ -45,12 +45,16 @@ pub trait Snapshot: Sized {
   fn should_rewrite(&self, size: u64) -> bool;
 
   /// Validate the entry, return an error if the entry is invalid.
+  ///
+  /// This method will be run before persisting entry to the underlying append-only log.
   fn validate(
     &self,
     entry: &Entry<Self::Record>,
   ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>;
 
   /// Validate the batch of entries, return an error if the batch is invalid.
+  ///
+  /// This method will be run before persisting batch to the underlying append-only log.
   #[inline]
   fn validate_batch<I, B>(
     &self,
@@ -67,24 +71,21 @@ pub trait Snapshot: Sized {
   }
 
   /// Insert a new entry.
-  fn insert(
-    &mut self,
-    entry: Entry<Self::Record>,
-  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>;
+  ///
+  /// Inserting an entry should not fail, the validation should be done in the [`validate`](Snapshot::validate) method.
+  fn insert(&mut self, entry: Entry<Self::Record>);
 
   /// Insert a batch of entries.
-  fn insert_batch<I, B>(
-    &mut self,
-    entries: B,
-  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>
+  ///
+  /// Inserting a batch of entries should not fail, the validation should be done in the [`validate_batch`](Snapshot::validate_batch) method.
+  fn insert_batch<I, B>(&mut self, entries: B)
   where
     B: Batch<I, Self::Record>,
     I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
   {
     for entry in entries.into_iter() {
-      self.insert(entry.into())?;
+      self.insert(entry.into());
     }
-    Ok(())
   }
 
   /// Clear the snapshot.
@@ -117,12 +118,7 @@ impl Snapshot for () {
   }
 
   #[inline]
-  fn insert(
-    &mut self,
-    _entry: Entry<Self::Record>,
-  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>> {
-    Ok(())
-  }
+  fn insert(&mut self, _entry: Entry<Self::Record>) {}
 
   #[inline]
   fn clear(&mut self) -> Result<(), Self::Error> {
@@ -290,9 +286,9 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       self.opts.sync,
       &self.checksumer,
     )
-    .and_then(|len| {
+    .map(|len| {
       self.len += len as u64;
-      self.snapshot.insert(entry).map_err(Into::into)
+      self.snapshot.insert(entry)
     })
   }
 
@@ -343,7 +339,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
       encode_batch!(self(buf, batch));
       file.write_all(&buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self.snapshot.insert_batch(batch)?;
+        self.snapshot.insert_batch(batch);
         if self.opts.sync {
           file.flush().map_err(Error::io)
         } else {
@@ -357,7 +353,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
 
       file.write_all(buf).map_err(Error::io).and_then(|_| {
         self.len += total_encoded_size as u64;
-        self.snapshot.insert_batch(batch)?;
+        self.snapshot.insert_batch(batch);
         if self.opts.sync {
           file.flush().map_err(Error::io)
         } else {
@@ -462,7 +458,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         Some(e) => Among::Left(e),
         None => Error::checksum_mismatch(),
       })?;
-      self.snapshot.insert(ent)?;
+      self.snapshot.insert(ent);
       new_mmap[write_cursor..write_cursor + needed]
         .copy_from_slice(&old_mmap[read_cursor..read_cursor + needed]);
       read_cursor += needed;
@@ -582,7 +578,7 @@ impl<S: Snapshot, C: BuildChecksumer> AppendLog<S, C> {
         Some(e) => Among::Left(e),
         None => Error::checksum_mismatch(),
       })?;
-      snapshot.insert(ent)?;
+      snapshot.insert(ent);
       read_cursor += needed;
     }
 

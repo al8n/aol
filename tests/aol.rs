@@ -59,13 +59,12 @@ impl aol::Snapshot for SampleSnapshot {
     Ok(())
   }
 
-  fn insert(&mut self, entry: Entry<Self::Record>) -> Result<(), Either<Infallible, Self::Error>> {
+  fn insert(&mut self, entry: Entry<Self::Record>) {
     if entry.flag().is_creation() {
       self.creations.push(entry.into_data());
     } else {
       self.deletions.push(entry.into_data());
     }
-    Ok(())
   }
 
   fn clear(&mut self) -> Result<(), Self::Error> {
