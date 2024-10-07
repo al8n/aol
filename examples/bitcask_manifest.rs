@@ -859,6 +859,8 @@ fn open_manifest_file<P: AsRef<std::path::Path>>(
     .unwrap()
 }
 
+#[cfg_attr(test, test)]
+#[cfg_attr(miri, ignore)]
 fn main() {
   let dir = tempfile::tempdir().unwrap();
   let mut file = open_manifest_file(

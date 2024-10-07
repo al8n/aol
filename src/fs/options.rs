@@ -1,4 +1,21 @@
-use super::RewritePolicy;
+/// Rewrite policy.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum RewritePolicy {
+  /// Keep all entries which are not marked as deleted. When using this policy,
+  /// after the rewrite, the append-only log will be compacted, which only contains
+  /// the entries that are not marked as deleted.
+  #[default]
+  All,
+  /// Skip the first `usize` entries.
+  /// This policy is useful when you want to keep the latest entries.
+  ///
+  /// e.g. If the a log contains 10 entries, and you set the policy to `Skip(5)`,
+  /// and the first 3 entries are marked as deleted, the remaining is in good state,
+  /// after the rewrite, the log will only contain 2 entries.
+  Skip(usize),
+}
 
 /// Options for the append only log.
 #[viewit::viewit(vis_all = "pub(super)", getters(skip), setters(skip))]

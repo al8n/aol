@@ -12,7 +12,7 @@ keywords = ["log", "append-only", "append-only-log", "database", "manifest"]
 rust-version = "1.81.0"
 
 [workspace]
-exclude = ["integration"]
+members = ["integration"]
 
 [features]
 default = ["std", "either/default", "among/default"]

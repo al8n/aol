@@ -86,3 +86,9 @@ impl Error {
     Among::Right(Self::CorruptedHeader)
   }
 }
+
+#[cfg(feature = "std")]
+#[inline]
+pub(super) fn read_only_error() -> std::io::Error {
+  std::io::Error::new(std::io::ErrorKind::PermissionDenied, "append log read-only")
+}

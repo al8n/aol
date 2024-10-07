@@ -6,93 +6,21 @@ use std::{
 
 use among::Among;
 use checksum::{BuildChecksumer, Crc32};
-use either::Either;
 
 use super::*;
 
-pub use super::RewritePolicy;
-
 mod error;
+use error::read_only_error;
 pub use error::Error;
 
 mod options;
-pub use options::Options;
+pub use options::{Options, RewritePolicy};
 
 mod builder;
 pub use builder::Builder;
 
 const CURRENT_VERSION: u16 = 0;
 const MAX_INLINE_SIZE: usize = 64;
-
-/// The snapshot trait, snapshot may contain some in-memory information about the append-only log.
-pub trait Snapshot: Sized {
-  /// The data type.
-  type Record: Record;
-
-  /// The options type used to create a new snapshot.
-  type Options: Clone;
-
-  /// The error type.
-  type Error;
-
-  /// Create a new snapshot.
-  fn new(opts: Self::Options) -> Result<Self, Self::Error>;
-
-  /// Returns `true` if the snapshot should trigger rewrite.
-  ///
-  /// `size` is the current size of the append-only log.
-  fn should_rewrite(&self, size: u64) -> bool;
-
-  /// Validate the entry, return an error if the entry is invalid.
-  ///
-  /// This method will be run before persisting entry to the underlying append-only log.
-  fn validate(
-    &self,
-    entry: &Entry<Self::Record>,
-  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>;
-
-  /// Validate the batch of entries, return an error if the batch is invalid.
-  ///
-  /// This method will be run before persisting batch to the underlying append-only log.
-  #[inline]
-  fn validate_batch<I, B>(
-    &self,
-    entries: &B,
-  ) -> Result<(), Either<<Self::Record as Record>::Error, Self::Error>>
-  where
-    B: Batch<I, Self::Record>,
-    I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
-  {
-    for entry in entries.iter() {
-      self.validate(entry.as_ref())?;
-    }
-    Ok(())
-  }
-
-  /// Returns `true` if the current snapshot contains the entry.
-  fn contains(&self, entry: &Entry<<Self::Record as Record>::Ref<'_>>) -> bool;
-
-  /// Insert a new entry.
-  ///
-  /// Inserting an entry should not fail, the validation should be done in the [`validate`](Snapshot::validate) method.
-  fn insert(&mut self, entry: MaybeEntryRef<'_, Self::Record>);
-
-  /// Insert a batch of entries.
-  ///
-  /// Inserting a batch of entries should not fail, the validation should be done in the [`validate_batch`](Snapshot::validate_batch) method.
-  fn insert_batch<I, B>(&mut self, entries: B)
-  where
-    B: Batch<I, Self::Record>,
-    I: AsRef<Entry<Self::Record>> + Into<Entry<Self::Record>>,
-  {
-    for entry in entries.into_iter() {
-      self.insert(MaybeEntryRef::right(entry.into()));
-    }
-  }
-
-  /// Clear the snapshot.
-  fn clear(&mut self) -> Result<(), Self::Error>;
-}
 
 /// Append-only log implementation based on [`std::fs::File`].
 #[derive(Debug)]
