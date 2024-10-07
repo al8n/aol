@@ -3,7 +3,9 @@ use std::convert::Infallible;
 use among::Among;
 use aol::{buffer::VacantBuffer, Entry, MaybeEntryRef, Record, RecordRef};
 use either::Either;
-use smallvec_wrapper::{LargeVec, MediumVec, OneOrMore, SmallVec, TinyVec, XLargeVec, XXLargeVec, XXXLargeVec};
+use smallvec_wrapper::{
+  LargeVec, MediumVec, OneOrMore, SmallVec, TinyVec, XLargeVec, XXLargeVec, XXXLargeVec,
+};
 
 #[derive(Debug)]
 struct Sample {
@@ -322,14 +324,19 @@ fn file_write_large_entry() {
   }
 
   l.append_batch::<Entry<Sample>, _>(vec![]).unwrap();
-  l.append_batch::<Entry<Sample>, _>(OneOrMore::new()).unwrap(); 
+  l.append_batch::<Entry<Sample>, _>(OneOrMore::new())
+    .unwrap();
   l.append_batch::<Entry<Sample>, _>(TinyVec::new()).unwrap();
   l.append_batch::<Entry<Sample>, _>(SmallVec::new()).unwrap();
-  l.append_batch::<Entry<Sample>, _>(MediumVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(MediumVec::new())
+    .unwrap();
   l.append_batch::<Entry<Sample>, _>(LargeVec::new()).unwrap();
-  l.append_batch::<Entry<Sample>, _>(XLargeVec::new()).unwrap();
-  l.append_batch::<Entry<Sample>, _>(XXLargeVec::new()).unwrap();
-  l.append_batch::<Entry<Sample>, _>(XXXLargeVec::new()).unwrap();
+  l.append_batch::<Entry<Sample>, _>(XLargeVec::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>(XXLargeVec::new())
+    .unwrap();
+  l.append_batch::<Entry<Sample>, _>(XXXLargeVec::new())
+    .unwrap();
   l.append_batch::<Entry<Sample>, _>([]).unwrap();
 
   drop(l);
@@ -345,16 +352,17 @@ fn file_write_large_entry() {
   #[cfg(feature = "filelock")]
   l.unlock().unwrap();
 
-  l.append_batch(SmallVec::from_iter(
-    [Entry::creation(Sample {
+  l.append_batch(SmallVec::from_iter([
+    Entry::creation(Sample {
       a: 0,
       record: vec![0; 128],
     }),
     Entry::deletion(Sample {
       a: 0,
       record: vec![0; 128],
-    })],
-  )).unwrap();
+    }),
+  ]))
+  .unwrap();
 }
 
 fn rewrite<L: AppendLog<Record = Sample>>(l: &mut L)
