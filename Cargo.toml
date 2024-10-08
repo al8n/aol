@@ -58,7 +58,7 @@ required-features = ["std", "tracing", "smallvec-wrapper"]
 
 [dev-dependencies]
 tempfile = "3"
-derive_more = "0.99"
+derive_more = "1.0"
 smol_str = "0.3"
 
 [package.metadata.docs.rs]
