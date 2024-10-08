@@ -31,7 +31,7 @@ dbutils = { version = "0.6", default-features = false, features = ["crc32fast"] 
 either = { version = "1", default-features = false }
 paste = "1"
 
-fs4 = { version = "0.9", optional = true }
+fs4 = { version = "0.10", optional = true }
 memmap2 = { version = "0.9", optional = true }
 serde = { version = "1", optional = true, features = ["derive"] }
 smallvec-wrapper = { version = "0.1", optional = true, default-features = false, features = ["std"] }
@@ -58,7 +58,7 @@ required-features = ["std", "tracing", "smallvec-wrapper"]
 
 [dev-dependencies]
 tempfile = "3"
-derive_more = "0.99"
+derive_more = { version = "1", features = ["full"] }
 smol_str = "0.3"
 
 [package.metadata.docs.rs]
