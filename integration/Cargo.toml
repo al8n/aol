@@ -8,7 +8,7 @@ publish = false
 among = "0.1"
 aol = { path = "../", features = ["smallvec-wrapper"] }
 derive_more = { version = "1", features = ["full"] }
-dbutils = "0.6"
+dbutils = "0.8"
 either = "1"
 smol_str = "0.3"
 smallvec-wrapper = "0.1"
