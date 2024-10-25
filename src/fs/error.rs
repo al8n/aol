@@ -3,7 +3,7 @@ use among::Among;
 use core::fmt::{Debug, Display, Formatter, Result};
 
 /// Errors for append-only file.
-#[cfg_attr(feature = "std", derive(thiserror::Error))]
+#[derive(thiserror::Error)]
 pub enum Error {
   /// Missing corrupted append-only log header.
   #[error("missing append-only log header, log may be corrupted")]

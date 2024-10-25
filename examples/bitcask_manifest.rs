@@ -150,7 +150,7 @@ impl aol::Record for ManifestRecord {
     let encoded_len = self.encoded_size();
     let cap = buf.capacity();
     if cap < encoded_len {
-      return Err(InsufficientBuffer::with_information(encoded_len, cap).into());
+      return Err(InsufficientBuffer::with_information(encoded_len as u64, cap as u64).into());
     }
 
     match self {
@@ -174,7 +174,10 @@ impl aol::Record for ManifestRecord {
         let remaining = buf.remaining();
         let want = 1 + name.len();
         if want > remaining {
-          return Err(InsufficientBuffer::with_information(cur + want, cur + remaining).into());
+          return Err(
+            InsufficientBuffer::with_information((cur + want) as u64, (cur + remaining) as u64)
+              .into(),
+          );
         }
 
         buf.put_u8(name.len() as u8)?;
@@ -241,7 +244,9 @@ impl<'a> RecordRef<'a> for ManifestRecordRef<'a> {
         let len = buf[cur] as usize;
         cur += 1;
         if buf.len() < cur + len {
-          return Err(IncompleteBuffer::with_information(cur + len, buf.len()).into());
+          return Err(
+            IncompleteBuffer::with_information((cur + len) as u64, buf.len() as u64).into(),
+          );
         }
 
         let name = core::str::from_utf8(&buf[cur..cur + len])?;
