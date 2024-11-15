@@ -281,7 +281,7 @@ jobs:
       - name: Run tarpaulin
         run: AOL_GITHUB_CI=true cargo tarpaulin --run-types Tests --run-types Doctests --run-types Examples --all-features --out Xml --workspace
       - name: Upload to codecov.io
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ${{ github.repository }}
